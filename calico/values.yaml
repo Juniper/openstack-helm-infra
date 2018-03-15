@@ -188,7 +188,7 @@ monitoring:
     enabled: true
     calico_node:
       scrape: true
-      port: 9091
+      port: 9099
 
 networking:
   podSubnet: 192.168.0.0/16
@@ -325,7 +325,7 @@ conf:
     FELIX_HEALTHENABLED: "true"
     # Set Felix experimental Prometheus metrics server
     FELIX_PROMETHEUSMETRICSENABLED: "true"
-    FELIX_PROMETHEUSMETRICSPORT: "9096"
+    FELIX_PROMETHEUSMETRICSPORT: "9099"
     # Auto-detect the BGP IP address.
     IP: ""
     # Detection of source interface for routing
