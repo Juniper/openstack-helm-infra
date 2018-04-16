@@ -63,7 +63,7 @@ function ansible_install {
 
 if [ "x${DEPLOY}" == "xsetup-host" ]; then
   ansible_install
-  PLAYBOOKS="osh-infra-docker"
+  PLAYBOOKS="osh-infra-docker osh-infra-deploy-certs"
 elif [ "x${DEPLOY}" == "xk8s" ]; then
   PLAYBOOKS="osh-infra-build osh-infra-deploy-k8s"
 elif [ "x${DEPLOY}" == "xcharts" ]; then

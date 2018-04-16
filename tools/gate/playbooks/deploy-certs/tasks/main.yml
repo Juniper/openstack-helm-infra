@@ -1,0 +1,12 @@
+---
+- name: Generate SSL Certs
+  include: generate-certs.yaml
+  delegate_to: localhost
+  delegate_facts: True
+  when:
+    - tls_config is defined and tls_config.generate == true
+
+- name: Copy SSL Certs
+  include: copy-certs.yaml
+  when:
+    - tls_config is defined and tls_config.generate == true

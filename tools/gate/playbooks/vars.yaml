@@ -24,7 +24,6 @@ images:
   kubernetes:
     kubeadm_aio: openstackhelm/kubeadm-aio:dev
 
-
 kubernetes:
   network:
     default_device: null
@@ -32,6 +31,13 @@ kubernetes:
     cni: calico
     pod_subnet: 192.168.0.0/16
     domain: cluster.local
+
+tls_config:
+  generate: false
+  organization: OSH
+  cert_file:
+  key_file:
+  ca_file:
 
 nodes:
   labels:
