@@ -19,7 +19,7 @@
 images:
   tags:
     kube_state_metrics: quay.io/coreos/kube-state-metrics:v1.2.0
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
@@ -87,6 +87,8 @@ dependencies:
       services:
         - endpoint: internal
           service: local_image_registry
+    kube_state_metrics:
+      services: null
 
 endpoints:
   cluster_domain_suffix: cluster.local
@@ -120,11 +122,17 @@ endpoints:
       default: 'http'
     path:
       default: /metrics
+    port:
+      metrics:
+        default: 10251
   kube_controller_manager:
     scheme:
       default: 'http'
     path:
       default: /metrics
+    port:
+      metrics:
+        default: 10252
 
 monitoring:
   prometheus:
@@ -135,10 +143,6 @@ monitoring:
       scrape: true
     kube_controller_manager:
       scrape: true
-
-network:
-  kube_state_metrics:
-    port: 8080
 
 manifests:
   configmap_bin: true
