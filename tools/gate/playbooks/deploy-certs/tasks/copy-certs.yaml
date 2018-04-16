@@ -1,0 +1,17 @@
+---
+- name: Create SSL Cert dir on host
+  file: path="{{ item }}" state=directory
+  with_items:
+   - "{{ server_cert_dir }}"
+   - "{{ server_key_dir }}"
+
+- name: Copy SSL CA Cert file to default path
+  copy: src={{ item.src}} dest={{ item.dest }}
+  with_items:
+    - { src: "{{ tls_config.ca_file }}", dest: "{{ tls_config.ca_file }}" }
+
+- name: Copy cert files
+  copy: src={{ item.src}} dest={{ item.dest }}
+  with_items:
+    - { src: "{{ ssl_cert_dir }}/{{ ansible_hostname|lower }}.pem", dest: "{{ tls_config.cert_file }}"}
+    - { src: "{{ ssl_key_dir }}/{{ ansible_hostname|lower }}.pem", dest: "{{ tls_config.key_file }}" }

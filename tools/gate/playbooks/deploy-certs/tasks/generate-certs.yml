@@ -1,0 +1,125 @@
+---
+- name: install openssl
+  pip:
+    name: pyopenssl
+    state: latest
+
+- name: Get cert dir name
+  shell: dirname '{{ tls_config.cert_file }}'
+  register: ssl_cert_dir
+
+- name: Get key dir name
+  shell: dirname '{{ tls_config.key_file }}'
+  register: ssl_key_dir
+
+- name: Set ca_file as Generated CA file if not defined
+  set_fact:
+    tls_config: "{{ tls_config|default({})|combine({'ca_file': ssl_cert_dir+'/ca_cert.pem' }) }}"
+  when:
+    - tls_config.ca_file is not defined
+
+- name: Get ca_cert dir name
+  shell: dirname '{{ tls_config.ca_file }}'
+  register: ssl_ca_cert_dir
+
+- name: Get ca_key dir name
+  set_fact: ssl_ca_key_dir="{{ ssl_key_dir }}"
+
+- name: Get ca_key file name
+  set_fact: ssl_ca_key_file="{{ ssl_ca_key_dir }}/ca_key.pem"
+
+- name: Set subject alt name list for DNS
+  set_fact: list_item="DNS:{{ item }}"
+  with_items:
+    - "{{ hostvars[inventory_hostname].ansible_fqdn }}"
+    - "{{ hostvars[inventory_hostname].ansible_hostname }}"
+  register: dns_list_reg
+
+- name: Make list for DNS
+  set_fact: dns_list="{{ dns_list_reg.results | map(attribute='ansible_facts.list_item') | list }}"
+
+- name: set subject alt name list for IP
+  set_fact: ip_list_item="IP:{{ item }}"
+  with_items: "{{ hostvars[inventory_hostname].ansible_all_ipv4_addresses }}"
+  register: ip_list_reg
+
+- name: Make list for IP
+  set_fact: ip_list="{{ ip_list_reg.results | map(attribute='ansible_facts.ip_list_item') | list }}"
+
+- name: Set subject alt name list
+  set_fact:
+    san_list: "{{ dns_list  +  ip_list }}"
+
+- name: Create certs and key directories for Generation
+  become: yes
+  file:
+    state: directory
+    path: "{{ item.dir }}"
+    mode: "{{ item.mode }}"
+  with_items:
+    - dir: "{{ ssl_ca_cert_dir }}"
+      mode: "0755"
+    - dir: "{{ ssl_ca_key_dir }}"
+      mode: "0700"
+    - dir: "{{ ssl_cert_dir }}"
+      mode: "0755"
+    - dir: "{{ ssl_key_dir }}"
+      mode: "0700"
+
+- name: Check for existing OpenSSL CA certificate file.
+  stat:
+    path: "{{ tls_config.ca_file }}"
+  register: ca_cert_exists
+
+- name: Check for existing OpenSSL certificate file.
+  stat:
+    path: "{{ ssl_cert_dir }}/{{ ansible_hostname }}.pem"
+  register: cert_exists
+
+- name: Generate a CA PrivKey
+  openssl_privatekey:
+    path: "{{ ssl_ca_key_file }}"
+    size: 2048
+  when: ca_cert_exists.stat.exists == False
+
+- name: Generate a CA Cert CSR
+  openssl_csr:
+    path: "{{ ssl_ca_cert_dir }}/ca_cert.csr"
+    privatekey_path: "{{ ssl_ca_key_file }}"
+    common_name: "{{ hostvars['localhost'].ansible_hostname }}"
+  when: ca_cert_exists.stat.exists == False
+
+- name: Generate a self signed CA Cert
+  openssl_certificate:
+    path: "{{ tls_config.ca_file }}"
+    privatekey_path: "{{ ssl_ca_key_file }}"
+    csr_path: "{{ ssl_ca_cert_dir }}/ca_cert.csr"
+    provider: selfsigned
+    issuer:
+      CN: "{{ hostvars['localhost'].ansible_hostname }}"
+  when: ca_cert_exists.stat.exists == False
+
+- name: Generate a Server PrivKey
+  openssl_privatekey:
+    path: "{{ ssl_cert_dir }}/{{ ansible_hostname }}.pem"
+    size: 2048
+  when: cert_exists.stat.exists == False
+
+- name: Generate a Server Cert CSR
+  openssl_csr:
+    path: "{{ ssl_cert_dir }}/{{ ansible_hostname }}.csr"
+    privatekey_path: "{{ ssl_cert_dir }}/{{ ansible_hostname }}.pem"
+    common_name: "{{ ansible_hostname }}"
+    subject_alt_name: "{{ san_list }}"
+    organization_name: "{{ tls_config.organization }}"
+  when: cert_exists.stat.exists == False
+
+- name: Generate a Server Cert
+  openssl_certificate:
+    path: "{{ ssl_cert_dir }}/{{ ansible_hostname }}.pem"
+    privatekey_path: "{{ ssl_cert_dir }}/ca_cert.pem"
+    csr_path: "{{ ssl_cert_dir }}/{{ ansible_hostname }}.csr"
+    issuer:
+      CN: "{{ ansible_hostname }}"
+    provider: selfsigned
+  when: cert_exists.stat.exists == False
