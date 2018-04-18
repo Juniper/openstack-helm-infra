@@ -24,7 +24,7 @@ images:
     elasticsearch: docker.elastic.co/elasticsearch/elasticsearch:6.2.2
     helm_tests: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     prometheus_elasticsearch_exporter: docker.io/justwatch/elasticsearch_exporter:1.0.1
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
     snapshot_repository: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: "IfNotPresent"
@@ -35,8 +35,12 @@ images:
       - image_repo_sync
 
 labels:
-  node_selector_key: openstack-control-plane
-  node_selector_value: enabled
+  elasticsearch:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
+  job:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
 
 dependencies:
   dynamic:
@@ -337,22 +341,17 @@ monitoring:
 
 network:
   client:
-    port: 9200
     node_port:
       enabled: false
       port: 30920
   discovery:
-    port: 9300
     node_port:
       enabled: false
       port: 30930
   data:
-    port: 9300
     node_port:
       enabled: false
       port: 30931
-  prometheus_elasticsearch_exporter:
-    port: 9108
 
 storage:
   elasticsearch:

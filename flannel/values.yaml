@@ -15,13 +15,14 @@
 # https://raw.githubusercontent.com/coreos/flannel/v0.8.0/Documentation/kube-flannel.yml
 
 labels:
-  node_selector_key: openstack-control-plane
-  node_selector_value: enabled
+  job:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
 
 images:
   tags:
     flannel: quay.io/coreos/flannel:v0.8.0-amd64
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
