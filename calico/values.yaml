@@ -21,19 +21,19 @@
 #   calico/kube-policy-controller:v0.7.0
 
 labels:
-  node_selector_key: openstack-control-plane
-  node_selector_value: enabled
+  job:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
 
 images:
   tags:
     calico_etcd: quay.io/coreos/etcd:v3.1.10
     calico_node: quay.io/calico/node:v2.6.5
     calico_cni: quay.io/calico/cni:v1.11.2
-    calico_cni: quay.io/calico/cni:v1.10.0
     calico_ctl: quay.io/calico/ctl:v1.6.2
     calico_settings: quay.io/calico/ctl:v1.6.2
     calico_kube_policy_controller: quay.io/calico/kube-policy-controller:v0.7.0
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
@@ -140,6 +140,10 @@ dependencies:
           service: etcd
     etcd:
       services: null
+    image_repo_sync:
+      services:
+        - endpoint: internal
+          service: local_image_registry
 
 endpoints:
   cluster_domain_suffix: cluster.local
