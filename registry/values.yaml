@@ -18,8 +18,12 @@
 # name: value
 
 labels:
-  node_selector_key: openstack-control-plane
-  node_selector_value: enabled
+  registry:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
+  job:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
 
 release_group: null
 
@@ -28,7 +32,7 @@ images:
     registry: docker.io/registry:2
     registry_proxy: gcr.io/google_containers/kube-registry-proxy:0.4
     bootstrap: docker.io/docker:17.07.0
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
   pull_policy: "IfNotPresent"
   local_registry:
     active: false
@@ -117,7 +121,7 @@ bootstrap:
   script:
     docker info
   preload_images:
-    - quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    - quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
 
 dependencies:
   static:

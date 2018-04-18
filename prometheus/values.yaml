@@ -21,7 +21,7 @@ images:
   tags:
     prometheus: docker.io/prom/prometheus:v2.0.0
     helm_tests: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
@@ -31,8 +31,12 @@ images:
       - image_repo_sync
 
 labels:
-  node_selector_key: openstack-control-plane
-  node_selector_value: enabled
+  prometheus:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
+  job:
+    node_selector_key: openstack-control-plane
+    node_selector_value: enabled
 
 pod:
   affinity:
@@ -156,11 +160,14 @@ network:
   prometheus:
     ingress:
       public: true
-      proxy_body_size: 1024M
+      classes:
+        namespace: "nginx"
+        cluster: "nginx-cluster"
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: /
     node_port:
       enabled: false
       port: 30900
-    port: 9090
 
 storage:
   enabled: true
@@ -174,40 +181,30 @@ storage:
 manifests:
   configmap_bin: true
   configmap_etc: true
-  ingress_prometheus: true
+  ingress: true
   helm_tests: true
   job_image_repo_sync: true
-  service_ingress_prometheus: true
+  service_ingress: true
   service: true
   statefulset_prometheus: true
 
 conf:
   prometheus:
-    storage:
-      tsdb:
-        path: /var/lib/prometheus/data
-        retention: 7d
-        min_block_duration: 2h
-        max_block_duration: 6h
-    log:
-      format: logger:stdout?json=true
-      level: info
-    query:
-      max_concurrency: 20
-      timeout: 2m
-    web_admin_api:
-      enabled: false
+    # Consumed by a prometheus helper function to generate the command line flags
+    # for configuring the prometheus service
+    command_line_flags:
+      log.level: info
+      query.max_concurrency: 20
+      query.timeout: 2m
+      storage.tsdb.path: /var/lib/prometheus/data
+      storage.tsdb.retention: 7d
+      storage.tsdb.min_block_duration: 2h
+      storage.tsdb.max_block_duration: 2h
+      web.enable_admin_api: false
     scrape_configs:
       global:
         scrape_interval: 60s
         evaluation_interval: 60s
-      rule_files:
-        - /etc/config/rules/alertmanager.rules
-        - /etc/config/rules/etcd3.rules
-        - /etc/config/rules/kubernetes.rules
-        - /etc/config/rules/kube_apiserver.rules
-        - /etc/config/rules/kube_controller_manager.rules
-        - /etc/config/rules/kubelet.rules
       scrape_configs:
         - job_name: kubelet
           scheme: https

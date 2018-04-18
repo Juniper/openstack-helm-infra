@@ -28,7 +28,7 @@ labels:
   prometheus_fluentd_exporter:
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
-  elasticsearch_template:
+  job:
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
 
@@ -37,7 +37,7 @@ images:
     fluentbit: docker.io/fluent/fluent-bit:0.12.14
     fluentd: docker.io/kolla/ubuntu-source-fluentd:ocata
     prometheus_fluentd_exporter: docker.io/srwilkers/fluentd_exporter:v0.1
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.2.1
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
     helm_tests: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     elasticsearch_template: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     image_repo_sync: docker.io/docker:17.07.0
@@ -62,7 +62,7 @@ dependencies:
           - endpoint: node
             service: local_image_registry
   static:
-    elasticsearch-template:
+    elasticsearch_template:
       services:
         - endpoint: internal
           service: elasticsearch
@@ -73,6 +73,8 @@ dependencies:
         - endpoint: internal
           service: fluentd
     fluentd:
+      jobs:
+        - elasticsearch-template
       services:
         - endpoint: internal
           service: elasticsearch
@@ -159,17 +161,18 @@ conf:
         max_retry_wait: 300
         disable_retry_limit: ""
         num_threads: 8
+        type_name: fluentd
   fluentd_exporter:
     log:
       format: "logger:stdout?json=true"
       level: "info"
   template:
     template: "logstash-*"
+    index_patterns: "logstash-*"
     settings:
-      number_of_shards: 5
-      number_of_replicas: 1
+      number_of_shards: 1
     mappings:
-      _doc:
+      doc:
         properties:
           kubernetes:
             properties:
@@ -229,10 +232,8 @@ endpoints:
     scheme:
       default: http
     port:
-      client:
+      http:
         default: 80
-      discovery:
-        default: 9300
   kafka:
     namespace: null
     name: kafka
@@ -289,11 +290,6 @@ network:
     node_port:
       enabled: false
       port: 32329
-    port:
-      service: 24224
-      metrics: 24220
-  prometheus_fluentd_exporter:
-    port: 9309
 
 pod:
   affinity:
