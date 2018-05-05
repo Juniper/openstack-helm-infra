@@ -23,6 +23,33 @@
     option: dns
     value: none
 
+- name: DNS | get existing conf from resolv.conf
+  block:
+    - name: get existing nameserver list
+      shell: cat /etc/resolv.conf  | grep -v '^#' | grep nameserver | awk '{print $2}'
+      register: existing_ns
+
+    - name: get search domain list
+      shell: cat /etc/resolv.conf  | grep -v '^#' | grep search | sed -n 's/search //p'
+      register: existing_sd
+
+    - name: insert existing nameserver list to external_dns_nameservers
+      set_fact:
+        external_dns_nameservers: "[ '{{ item }}' ] + {{ external_dns_nameservers }}"
+      when: existing_ns.rc == 0
+      with_items:
+        - "{{ existing_ns.stdout_lines }}"
+
+    - name: initialize old_sd var
+      set_fact:
+        old_sd: ""
+
+    - name: set old_sd var
+      set_fact:
+        old_sd: {{ existing_sd.stdout }}
+      when: existing_sd.rc == 0
+
+
 - name: DNS | load new resolv.conf
   template:
     unsafe_writes: yes
