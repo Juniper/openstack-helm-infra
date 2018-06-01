@@ -1,0 +1,73 @@
+# Copyright 2017 The Openstack-Helm Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+all:
+  children:
+    primary:
+      hosts:
+        node1:
+          ansible_port: 22
+          ansible_host: 10.10.10.13
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+    contrail-controller:
+      hosts:
+        node2:
+          ansible_port: 22
+          ansible_host: 10.10.10.14
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+        node3:
+          ansible_port: 22
+          ansible_host: 10.10.10.15
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+        node4:
+          ansible_port: 22
+          ansible_host: 10.10.10.16
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+    contrial-vrouter-kernel:
+      hosts:
+        node5:
+          ansible_port: 22
+          ansible_host: 10.10.10.17
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+    contrail-vrouter-dpdk:
+      hosts:
+        node6:
+          ansible_port: 22
+          ansible_host: 10.10.10.18
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+      vars:
+        DPDK_UIO_DRIVER: vfio-pci
+        contrail_modify_grub: true
+    contrail-vrouter-sriov:
+      hosts:
+        node7:
+          ansible_port: 22
+          ansible_host: 10.10.10.19
+          ansible_user: ubuntu
+          ansible_ssh_private_key_file: /home/ubuntu/.ssh/insecure.pem
+          ansible_ssh_extra_args: -o StrictHostKeyChecking=no
+      vars:
+        contrail_modify_grub: true
