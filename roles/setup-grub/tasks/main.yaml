@@ -1,0 +1,57 @@
+# enable IOMMU if sriov/vfio-dpdk is enabled
+- name: set grub file name.
+  stat:
+    path: "/etc/default/grub"
+  register: file_rc
+
+- name: set SRIOV data
+  set_fact:
+    contrail_modify_grub: 'True'
+    contrail_grub_cmd_line: 'nomdmonddf nomdmonisw intel_iommu=on'
+  when: "'contrail-vrouter-sriov' in groups"
+
+- name: set VFIO-DPDK data
+  set_fact:
+    contrail_modify_grub: 'True'
+    contrail_grub_cmd_line: 'intel_iommu=on iommu=pt'
+  when: "'contrail-vrouter-dpdk' in groups and
+        (DPDK_UIO_DRIVER is defined and
+        (DPDK_UIO_DRIVER == 'vfio_pci' or DPDK_UIO_DRIVER == 'vfio-pci'))"
+
+- name: Remove the SRIOV/VFIO config if present - to fix limiation in lineinfile
+  replace:
+    path: "/etc/default/grub"
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=\"((.*))(( {{ contrail_grub_cmd_line}}))\"'
+    replace: 'GRUB_CMDLINE_LINUX_DEFAULT="\1"'
+  register: contrail_grub_restored
+  when: contrail_modify_grub is defined and file_rc.stat.exists == true
+
+- name: Modify grub to include iommu for SRIOV and VFIO-DPDK
+  replace:
+    path: "/etc/default/grub"
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT=\"((.*))(( {{ contrail_grub_cmd_line}})|(?<! {{contrail_grub_cmd_line}}))\"'
+    replace: 'GRUB_CMDLINE_LINUX_DEFAULT="\1 {{ contrail_grub_cmd_line }}"'
+  register: contrail_grub_modified
+  when: contrail_modify_grub is defined and file_rc.stat.exists == true
+
+- name: execute update-grub/sys
+  command: update-grub
+  register: gstat
+  when:
+    - contrail_modify_grub is defined
+    - file_rc.stat.exists == true
+    - ((contrail_grub_restored.changed == false and contrail_grub_modified.changed == true) or
+      (contrail_grub_added.changed == true))
+
+- name: restart server
+  shell: sleep 2 && shutdown -r now "Ansible updates triggered"
+  async: 1
+  poll: 0
+  become: true
+  when: (contrail_modify_grub is defined and gstat is defined and gstat.changed)
+
+- name: wait for server to come back online
+  wait_for_connection:
+    delay: 30
+    timeout: 2400
+  when: (contrail_modify_grub is defined and gstat is defined and gstat.changed)
