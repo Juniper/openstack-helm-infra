@@ -12,6 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+- name: set node_pass
+  set_fact:
+    node_pass: false
+
+- name: dump the stats file
+  shell: grep "{{ hostvars[inventory_hostname].ansible_hostname }}.*Ready" /tmp/nodestat
+  register: statsinfo
+  ignore_errors: yes
+
+- debug:
+    msg: "{{ statsinfo }}"
+
+- name: evaluate node pass
+  set_fact:
+    node_pass: true
+  when: statsinfo.rc  == 0
+
+- name: print node_pass
+  debug:
+    msg: "{{ node_pass }}"
+
 - name: check if docker deploy is needed
   raw: which docker
   register: need_docker
@@ -92,6 +113,7 @@
     state: restarted
     daemon_reload: yes
     name: docker
+  when: node_pass == false
 
 - name: login to private_registries
   when: docker.private_registries is defined
