@@ -23,9 +23,31 @@
     name: deploy-kubeadm-aio-common
     tasks_from: main
 
+- name: set node_pass
+  set_fact:
+    node_pass: false
+
+- name: dump the stats file
+  shell: grep "{{ hostvars[inventory_hostname].ansible_hostname }}.*Ready" /tmp/nodestat
+  register: statsinfo
+  ignore_errors: yes
+
+- debug:
+    msg: "{{ statsinfo }}"
+
+- name: evaluate node pass
+  set_fact:
+    node_pass: true
+  when: statsinfo.rc  == 0
+
+- name: print node_pass
+  debug:
+    msg: "{{ node_pass }}"
+
 - name: deploying kubernetes on master node
   vars:
     kubeadm_aio_action: deploy-kube
   include_role:
     name: deploy-kubeadm-aio-common
     tasks_from: util-kubeadm-aio-run
+  when: node_pass == false

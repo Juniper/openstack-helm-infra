@@ -12,12 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+- hosts: primary
+  pre_tasks:
+    - name: get the output of kubectl getnodes
+      shell: kubectl get nodes
+      when: groups['primary'][0] == "{{ inventory_hostname }}"
+      register: clust_output
+      ignore_errors: True
+
+    - name: create nodestat file
+      file: path=/var/tmp/nodestat state=touch
+
+    - name: copy output to file
+      lineinfile:
+        path: /var/tmp/nodestat
+        line: "{{ item }}"
+      with_items: "{{ clust_output.stdout_lines }}"
+
+    - name: fetch node status file
+      fetch:
+        src: /var/tmp/nodestat
+        dest: /tmp/
+
+- hosts: all
+  pre_tasks:
+    - name: move nodestat file to all nodes
+      copy:
+        src: "/tmp/{{ groups['primary'][0] }}/nodestat"
+        dest: /tmp
+
 - hosts: all
   vars_files:
     - vars.yaml
   vars:
     work_dir: "{{ zuul.project.src_dir }}/{{ zuul_osh_infra_relative_path | default('') }}"
-  gather_facts: False
+  gather_facts: True
   become: yes
   roles:
     - deploy-python

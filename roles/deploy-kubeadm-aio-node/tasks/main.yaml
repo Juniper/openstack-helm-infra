@@ -25,6 +25,27 @@
     name: deploy-kubeadm-aio-common
     tasks_from: main
 
+- name: set node_pass
+  set_fact:
+    node_pass: false
+
+- name: dump the stats file
+  shell: grep "{{ hostvars[inventory_hostname].ansible_hostname }}.*Ready" /tmp/nodestat
+  register: statsinfo
+  ignore_errors: yes
+
+- debug:
+    msg: "{{ statsinfo }}"
+
+- name: evaluate node pass
+  set_fact:
+    node_pass: true
+  when: statsinfo.rc  == 0
+
+- name: print node_pass
+  debug:
+    msg: "{{ node_pass }}"
+
 - name: generating the kubeadm join command for the node
   include: util-generate-join-command.yaml
   delegate_to: "{{ kube_master }}"
@@ -34,6 +55,7 @@
     kubeadm_aio_action: join-kube
     kubeadm_aio_join_command: "{{ kubeadm_cluster_join_command }}"
   include: util-run-join-command.yaml
+  when: node_pass == false
 
 - name: waiting for node to be ready
   delegate_to: "{{ kube_master }}"
