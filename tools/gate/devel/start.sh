@@ -55,8 +55,12 @@ function ansible_install {
   sudo -H -E pip install --no-cache-dir --upgrade pip
   sudo -H -E pip install --no-cache-dir --upgrade setuptools
   sudo -H -E pip install --no-cache-dir --upgrade pyopenssl
-  sudo -H -E pip install --no-cache-dir \
-    ansible \
+  # NOTE(srwilkers): Pinning ansible to 2.5.5, as pip installs 2.6 by default.
+  # 2.6 introduces a new command flag (init) for the docker_container module
+  # that is incompatible with what we have currently. 2.5.5 ensures we match
+  # what's deployed in the gates
+  sudo -H -E pip install --no-cache-dir --upgrade "ansible==2.5.5"
+  sudo -H -E pip install --no-cache-dir --upgrade \
     ara \
     yq
 }
