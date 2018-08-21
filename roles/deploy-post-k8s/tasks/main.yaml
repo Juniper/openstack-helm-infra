@@ -1,0 +1,10 @@
+
+- name: check /etc/host file exists
+  stat:
+    path: /etc/hosts
+  register: file_st
+
+- name: add host entry to /etc/hosts file
+  lineinfile: dest=/etc/hosts line="{{ hostvars[item]['ansible_host'] }} {{ hostvars[item]['ansible_hostname'] }} {{ hostvars[item]['ansible_hostname'] }}"
+  with_items: "{{ groups['all'] }}"
+  when: file_st.stat.exists == true

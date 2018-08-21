@@ -42,3 +42,11 @@
     - deploy-kubeadm-aio-node
   tags:
     - deploy-kube-nodes
+
+- hosts: all
+  vars_files:
+    - vars.yaml
+  vars:
+    work_dir: "{{ zuul.project.src_dir }}/{{ zuul_osh_infra_relative_path | default('') }}"
+  roles:
+    - deploy-post-k8s
