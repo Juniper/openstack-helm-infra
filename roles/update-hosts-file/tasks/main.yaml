@@ -1,0 +1,21 @@
+
+- name: check /etc/host file exists
+  stat:
+    path: /etc/hosts
+  register: file_st
+
+- name: check host entry already present
+  shell: grep "{{ hostvars[item]['ansible_hostname'] }}" /etc/hosts
+  register: host_info
+  with_items: "{{ groups['all'] }}"
+  when: file_st.stat.exists == true
+  ignore_errors: yes
+
+- name: print host info results
+  debug:
+    msg: "{{ host_info.results }}"
+
+- name: add host entry to /etc/hosts file
+  lineinfile: dest=/etc/hosts line="{{ hostvars[item.item]['ansible_host'] }} {{ hostvars[item.item]['ansible_hostname'] }} {{ hostvars[item.item]['ansible_hostname'] }}"
+  with_items: "{{ host_info.results }}"
+  when: item.rc != 0
