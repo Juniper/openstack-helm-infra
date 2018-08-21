@@ -12,6 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+- hosts: all
+  vars_files:
+    - vars.yaml
+  vars:
+    work_dir: "{{ zuul.project.src_dir }}/{{ zuul_osh_infra_relative_path | default('') }}"
+  roles:
+    - update-hosts-file
+
 - hosts: primary
   vars_files:
     - vars.yaml
@@ -42,3 +50,4 @@
     - deploy-kubeadm-aio-node
   tags:
     - deploy-kube-nodes
+
