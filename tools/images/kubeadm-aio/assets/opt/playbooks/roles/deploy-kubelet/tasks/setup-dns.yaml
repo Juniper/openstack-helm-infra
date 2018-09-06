@@ -33,9 +33,34 @@
       shell: cat /etc/resolv.conf  | grep -v '^#' | grep search | sed -n 's/search //p'
       register: existing_sd
 
+    - name: set default dns
+      set_fact:
+        def_dns: "10.96.0.10"
+
+    - name: add default dns to external dns list
+      set_fact:
+        external_dns_nameservers: "{{ external_dns_nameservers }} + [ '{{ def_dns }}' ]"
+
+    - name: search the nameserver already present
+      shell: grep "{{ item }}" /etc/resolv.conf
+      register: ns_info
+      with_items: "{{ external_dns_nameservers }}"
+      ignore_errors: yes    
+
+    - name: Init modified_dns variable
+      set_fact:
+        modified_dns_nameservers: []
+
+    - name: check the result about search
+      set_fact:
+        modified_dns_nameservers: "[ '{{ item.item }}' ] + {{ modified_dns_nameservers }}"
+      with_items:
+        - "{{ ns_info.results }}"
+      when: item.rc != 0
+
     - name: insert existing nameserver list to external_dns_nameservers
       set_fact:
-        external_dns_nameservers: "[ '{{ item }}' ] + {{ external_dns_nameservers }}"
+        modified_dns_nameservers: "[ '{{ item }}' ] + {{ modified_dns_nameservers }}"
       when: existing_ns is success
       with_items:
         - "{{ existing_ns.stdout_lines }}"
@@ -49,6 +74,9 @@
         old_sd: "{{ existing_sd.stdout }}"
       when: existing_sd is success
 
+    - name: update the external list
+      set_fact:
+        external_dns_nameservers: "{{ modified_dns_nameservers }}"
 
 - name: DNS | load new resolv.conf
   template:
