@@ -1,5 +1,6 @@
+{% if 'svc' not in old_sd %}
 search svc.{{ k8s.networking.dnsDomain }} {{ k8s.networking.dnsDomain }} {{ old_sd }}
-nameserver 10.96.0.10
+{% endif %}
 {% for nameserver in external_dns_nameservers %}
 nameserver {{ nameserver }}
 {% endfor %}
