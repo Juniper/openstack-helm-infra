@@ -18,6 +18,9 @@
     playbook_group_id: "{{ ansible_user_gid }}"
     playbook_user_dir: "{{ ansible_user_dir }}"
 
+- debug:
+    msg: "{{ playbook_group_id }}"
+
 - name: deploying kubelet and support assets to node
   include_role:
     name: deploy-kubeadm-aio-common
