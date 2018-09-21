@@ -19,9 +19,10 @@
 
 images:
   tags:
-    prometheus: docker.io/prom/prometheus:v2.0.0
+    apache_proxy: docker.io/httpd:2.4
+    prometheus: docker.io/prom/prometheus:v2.3.2
     helm_tests: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.1
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
@@ -103,11 +104,22 @@ endpoints:
   monitoring:
     name: prometheus
     namespace: null
+    auth:
+      admin:
+        username: admin
+        password: changeme
     hosts:
       default: prom-metrics
       public: prometheus
     host_fqdn_override:
       default: null
+      # NOTE(srwilkers): this chart supports TLS for fqdn over-ridden public
+      # endpoints using the following format:
+      # public:
+      #   host: null
+      #   tls:
+      #     crt: null
+      #     key: null
     path:
       default: null
     scheme:
@@ -115,13 +127,15 @@ endpoints:
     port:
       api:
         default: 9090
-        public: 80
+      http:
+        default: 80
   alerts:
     name: alertmanager
     namespace: null
     hosts:
-      default: alerts-api
+      default: alerts-engine
       public: alertmanager
+      discovery: alertmanager-discovery
     host_fqdn_override:
       default: null
     path:
@@ -132,6 +146,24 @@ endpoints:
       api:
         default: 9093
         public: 80
+      mesh:
+        default: 6783
+  ldap:
+    hosts:
+      default: ldap
+    auth:
+      admin:
+        bind: "cn=admin,dc=cluster,dc=local"
+        password: password
+    host_fqdn_override:
+      default: null
+    path:
+      default: "/ou=People,dc=cluster,dc=local"
+    scheme:
+      default: ldap
+    port:
+      ldap:
+        default: 389
 
 dependencies:
   dynamic:
@@ -169,6 +201,14 @@ network:
       enabled: false
       port: 30900
 
+secrets:
+  tls:
+    monitoring:
+      prometheus:
+        public: prometheus-tls-public
+  prometheus:
+    admin: prometheus-admin-creds
+
 storage:
   enabled: true
   pvc:
@@ -184,11 +224,213 @@ manifests:
   ingress: true
   helm_tests: true
   job_image_repo_sync: true
+  secret_ingress_tls: true
+  secret_prometheus: true
   service_ingress: true
   service: true
   statefulset_prometheus: true
 
 conf:
+  httpd: |
+    ServerRoot "/usr/local/apache2"
+
+    Listen 80
+
+    LoadModule mpm_event_module modules/mod_mpm_event.so
+    LoadModule authn_file_module modules/mod_authn_file.so
+    LoadModule authn_core_module modules/mod_authn_core.so
+    LoadModule authz_host_module modules/mod_authz_host.so
+    LoadModule authz_groupfile_module modules/mod_authz_groupfile.so
+    LoadModule authz_user_module modules/mod_authz_user.so
+    LoadModule authz_core_module modules/mod_authz_core.so
+    LoadModule access_compat_module modules/mod_access_compat.so
+    LoadModule auth_basic_module modules/mod_auth_basic.so
+    LoadModule ldap_module modules/mod_ldap.so
+    LoadModule authnz_ldap_module modules/mod_authnz_ldap.so
+    LoadModule reqtimeout_module modules/mod_reqtimeout.so
+    LoadModule filter_module modules/mod_filter.so
+    LoadModule proxy_html_module modules/mod_proxy_html.so
+    LoadModule log_config_module modules/mod_log_config.so
+    LoadModule env_module modules/mod_env.so
+    LoadModule headers_module modules/mod_headers.so
+    LoadModule setenvif_module modules/mod_setenvif.so
+    LoadModule version_module modules/mod_version.so
+    LoadModule proxy_module modules/mod_proxy.so
+    LoadModule proxy_connect_module modules/mod_proxy_connect.so
+    LoadModule proxy_http_module modules/mod_proxy_http.so
+    LoadModule proxy_balancer_module modules/mod_proxy_balancer.so
+    LoadModule slotmem_shm_module modules/mod_slotmem_shm.so
+    LoadModule slotmem_plain_module modules/mod_slotmem_plain.so
+    LoadModule unixd_module modules/mod_unixd.so
+    LoadModule status_module modules/mod_status.so
+    LoadModule autoindex_module modules/mod_autoindex.so
+
+    <IfModule unixd_module>
+    User daemon
+    Group daemon
+    </IfModule>
+
+    <Directory />
+        AllowOverride none
+        Require all denied
+    </Directory>
+
+    <Files ".ht*">
+        Require all denied
+    </Files>
+
+    ErrorLog /dev/stderr
+
+    LogLevel warn
+
+    <IfModule log_config_module>
+        LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+        LogFormat "%h %l %u %t \"%r\" %>s %b" common
+
+        <IfModule logio_module>
+          LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\" %I %O" combinedio
+        </IfModule>
+
+        CustomLog /dev/stdout common
+
+        CustomLog /dev/stdout combined
+    </IfModule>
+
+    <Directory "/usr/local/apache2/cgi-bin">
+        AllowOverride None
+        Options None
+        Require all granted
+    </Directory>
+
+    <IfModule headers_module>
+        RequestHeader unset Proxy early
+    </IfModule>
+
+    <IfModule proxy_html_module>
+    Include conf/extra/proxy-html.conf
+    </IfModule>
+
+    <VirtualHost *:80>
+      # Restrict general user (LDAP) access to the /graph endpoint, as general trusted
+      # users should only be able to query Prometheus for metrics and not have access
+      # to information like targets, configuration, flags or build info for Prometheus
+      <Location />
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file ldap
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          AuthLDAPBindDN {{ .Values.endpoints.ldap.auth.admin.bind }}
+          AuthLDAPBindPassword {{ .Values.endpoints.ldap.auth.admin.password }}
+          AuthLDAPURL {{ tuple "ldap" "default" "ldap" . | include "helm-toolkit.endpoints.keystone_endpoint_uri_lookup" | quote }}
+          Require valid-user
+      </Location>
+      <Location /graph>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/graph
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/graph
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file ldap
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          AuthLDAPBindDN {{ .Values.endpoints.ldap.auth.admin.bind }}
+          AuthLDAPBindPassword {{ .Values.endpoints.ldap.auth.admin.password }}
+          AuthLDAPURL {{ tuple "ldap" "default" "ldap" . | include "helm-toolkit.endpoints.keystone_endpoint_uri_lookup" | quote }}
+          Require valid-user
+      </Location>
+      # Restrict access to the /config (dashboard) and /api/v1/status/config (http) endpoints
+      # to the admin user
+      <Location /config>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/config
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/config
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      <Location /api/v1/status/config>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/status/config
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/status/config
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      # Restrict access to the /flags (dashboard) and /api/v1/status/flags (http) endpoints
+      # to the admin user
+      <Location /flags>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/flags
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/flags
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      <Location /api/v1/status/flags>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/status/flags
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/status/flags
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      # Restrict access to the /status (dashboard) endpoint to the admin user
+      <Location /status>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/status
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/status
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      # Restrict access to the /rules (dashboard) endpoint to the admin user
+      <Location /rules>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/rules
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/rules
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      # Restrict access to the /targets (dashboard) and /api/v1/targets (http) endpoints
+      # to the admin user
+      <Location /targets>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/targets
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/targets
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      <Location /api/v1/targets>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/targets
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/targets
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+      # Restrict access to the /api/v1/admin/tsdb/ endpoints (http) to the admin user.
+      # These endpoints are disabled by default, but are included here to ensure only
+      # an admin user has access to these endpoints when enabled
+      <Location /api/v1/admin/tsdb/>
+          ProxyPass http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/admin/tsdb/
+          ProxyPassReverse http://localhost:{{ tuple "monitoring" "internal" "api" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/api/v1/admin/tsdb/
+          AuthName "Prometheus"
+          AuthType Basic
+          AuthBasicProvider file
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          Require valid-user
+      </Location>
+    </VirtualHost>
   prometheus:
     # Consumed by a prometheus helper function to generate the command line flags
     # for configuring the prometheus service
@@ -198,14 +440,72 @@ conf:
       query.timeout: 2m
       storage.tsdb.path: /var/lib/prometheus/data
       storage.tsdb.retention: 7d
-      storage.tsdb.min_block_duration: 2h
-      storage.tsdb.max_block_duration: 2h
+      # NOTE(srwilkers): These settings default to false, but they are
+      # exposed here to allow enabling if desired. Please note the security
+      # impacts of enabling these flags. More information regarding the impacts
+      # can be found here: https://prometheus.io/docs/operating/security/
+      #
+      # If set to true, all administrative functionality is exposed via the http
+      # /api/*/admin/ path
       web.enable_admin_api: false
+      # If set to true, allows for http reloads and shutdown of Prometheus
+      web.enable_lifecycle: false
     scrape_configs:
       global:
         scrape_interval: 60s
         evaluation_interval: 60s
       scrape_configs:
+        # NOTE(srwilkers): The job definition for Prometheus should always be
+        # listed first, so we can inject the basic auth username and password
+        # via the endpoints section
+        - job_name: 'prometheus-metrics'
+          kubernetes_sd_configs:
+          - role: endpoints
+          scrape_interval: 60s
+          relabel_configs:
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: keep
+            regex: "prom-metrics"
+          - source_labels:
+              - __meta_kubernetes_service_annotation_prometheus_io_scrape
+            action: keep
+            regex: true
+          - source_labels:
+              - __meta_kubernetes_service_annotation_prometheus_io_scheme
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels:
+              - __meta_kubernetes_service_annotation_prometheus_io_path
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels:
+              - __address__
+              - __meta_kubernetes_service_annotation_prometheus_io_port
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels:
+              - __meta_kubernetes_namespace
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: replace
+            target_label: instance
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: replace
+            target_label: kubernetes_name
+          - source_labels:
+              - __meta_kubernetes_service_name
+            target_label: job
+            replacement: ${1}
         - job_name: kubelet
           scheme: https
           # This TLS & bearer token file config is used to connect to the actual scrape
@@ -249,9 +549,11 @@ conf:
           # This job is not necessary and should be removed in Kubernetes 1.6 and
           # earlier versions, or it will cause the metrics to be scraped twice.
         - job_name: 'kubernetes-cadvisor'
+
           # Default to scraping over https. If required, just disable this or change to
           # `http`.
           scheme: https
+
           # This TLS & bearer token file config is used to connect to the actual scrape
           # endpoints for cluster components. This is separate to discovery auth
           # configuration because discovery & scraping are two separate concerns in
@@ -261,9 +563,10 @@ conf:
           tls_config:
             ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
           kubernetes_sd_configs:
           - role: node
-          scrape_interval: 45s
+
           relabel_configs:
           - action: labelmap
             regex: __meta_kubernetes_node_label_(.+)
@@ -274,23 +577,171 @@ conf:
             regex: (.+)
             target_label: __metrics_path__
             replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
-          - source_labels:
-              - __meta_kubernetes_node_name
-            action: replace
-            target_label: kubernetes_io_hostname
           metric_relabel_configs:
-          - action: replace
-            source_labels:
-              - id
-            regex: '^/machine\.slice/machine-rkt\\x2d([^\\]+)\\.+/([^/]+)\.service$'
-            target_label: rkt_container_name
-            replacement: '${2}-${1}'
-          - action: replace
-            source_labels:
-              - id
-            regex: '^/system\.slice/(.+)\.service$'
-            target_label: systemd_service_name
-            replacement: '${1}'
+          - source_labels:
+              - __name__
+            regex: 'container_network_tcp_usage_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_tasks_state'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_udp_usage_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_failures_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_cpu_load_average_10s'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_cpu_system_seconds_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_cpu_user_seconds_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_inodes_free'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_inodes_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_io_current'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_io_time_seconds_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_io_time_weighted_seconds_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_read_seconds_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_reads_merged_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_reads_merged_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_reads_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_sector_reads_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_sector_writes_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_write_seconds_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_writes_bytes_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_writes_merged_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_fs_writes_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_last_seen'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_cache'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_failcnt'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_max_usage_bytes'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_rss'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_swap'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_memory_usage_bytes'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_receive_errors_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_receive_packets_dropped_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_receive_packets_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_transmit_errors_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_transmit_packets_dropped_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_network_transmit_packets_total'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_spec_cpu_period'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_spec_cpu_shares'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_spec_memory_limit_bytes'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_spec_memory_reservation_limit_bytes'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_spec_memory_swap_limit_bytes'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'container_start_time_seconds'
+            action: drop
           # Scrape config for API servers.
           #
           # Kubernetes exposes API servers as endpoints to the default/kubernetes
@@ -331,6 +782,35 @@ conf:
               - __meta_kubernetes_endpoint_port_name
             action: keep
             regex: default;kubernetes;https
+          metric_relabel_configs:
+          - source_labels:
+              - __name__
+            regex: 'apiserver_admission_controller_admission_latencies_seconds_bucket'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'rest_client_request_latency_seconds_bucket'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'apiserver_response_sizes_bucket'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'apiserver_admission_step_admission_latencies_seconds_bucket'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'apiserver_admission_controller_admission_latencies_seconds_count'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'apiserver_admission_controller_admission_latencies_seconds_sum'
+            action: drop
+          - source_labels:
+              - __name__
+            regex: 'apiserver_request_latencies_summary'
+            action: drop
         # Scrape config for service endpoints.
         #
         # The relabeling allows the actual service scrape endpoint to be configured
@@ -342,11 +822,63 @@ conf:
         # * `prometheus.io/path`: If the metrics path is not `/metrics` override this.
         # * `prometheus.io/port`: If the metrics are exposed on a different port to the
         # service then set this appropriately.
+        - job_name: 'openstack-exporter'
+          kubernetes_sd_configs:
+          - role: endpoints
+          scrape_interval: 60s
+          relabel_configs:
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: keep
+            regex: "openstack-metrics"
+          - source_labels:
+              - __meta_kubernetes_service_annotation_prometheus_io_scrape
+            action: keep
+            regex: true
+          - source_labels:
+              - __meta_kubernetes_service_annotation_prometheus_io_scheme
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels:
+              - __meta_kubernetes_service_annotation_prometheus_io_path
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels:
+              - __address__
+              - __meta_kubernetes_service_annotation_prometheus_io_port
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels:
+              - __meta_kubernetes_namespace
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: replace
+            target_label: instance
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: replace
+            target_label: kubernetes_name
+          - source_labels:
+              - __meta_kubernetes_service_name
+            target_label: job
+            replacement: ${1}
         - job_name: 'kubernetes-service-endpoints'
           kubernetes_sd_configs:
           - role: endpoints
           scrape_interval: 60s
           relabel_configs:
+          - source_labels:
+              - __meta_kubernetes_service_name
+            action: drop
+            regex: '(openstack-metrics|prom-metrics)'
           - source_labels:
               - __meta_kubernetes_service_annotation_prometheus_io_scrape
             action: keep
@@ -416,7 +948,6 @@ conf:
             action: replace
             target_label: kubernetes_pod_name
         - job_name: calico-etcd
-          honor_labels: false
           kubernetes_sd_configs:
           - role: service
           scrape_interval: 20s
@@ -452,19 +983,19 @@ conf:
       alerting:
         alertmanagers:
         - kubernetes_sd_configs:
-          - role: pod
+            - role: pod
+          tls_config:
+            ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
           relabel_configs:
-          - source_labels:
-              - __meta_kubernetes_pod_label_name
+          - source_labels: [__meta_kubernetes_pod_label_application]
             regex: alertmanager
             action: keep
-          - source_labels:
-              - __meta_kubernetes_namespace
-            regex: openstack
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: alerts-api
             action: keep
-          - source_labels:
-              - __meta_kubernetes_pod_container_port_number
-            regex:
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: peer-mesh
             action: drop
     rules:
       alertmanager:
@@ -499,7 +1030,7 @@ conf:
         groups:
         - name: etcd3.rules
           rules:
-          - alert: InsufficientMembers
+          - alert: etcd_InsufficientMembers
             expr: count(up{job="etcd"} == 0) > (count(up{job="etcd"}) / 2 - 1)
             for: 3m
             labels:
@@ -507,7 +1038,7 @@ conf:
             annotations:
               description: If one more etcd member goes down the cluster will be unavailable
               summary: etcd cluster insufficient members
-          - alert: NoLeader
+          - alert: etcd_NoLeader
             expr: etcd_server_has_leader{job="etcd"} == 0
             for: 1m
             labels:
@@ -515,14 +1046,14 @@ conf:
             annotations:
               description: etcd member {{ $labels.instance }} has no leader
               summary: etcd member has no leader
-          - alert: HighNumberOfLeaderChanges
+          - alert: etcd_HighNumberOfLeaderChanges
             expr: increase(etcd_server_leader_changes_seen_total{job="etcd"}[1h]) > 3
             labels:
               severity: warning
             annotations:
               description: etcd instance {{ $labels.instance }} has seen {{ $value }} leader changes within the last hour
               summary: a high number of leader changes within the etcd cluster are happening
-          - alert: HighNumberOfFailedGRPCRequests
+          - alert: etcd_HighNumberOfFailedGRPCRequests
             expr: sum(rate(etcd_grpc_requests_failed_total{job="etcd"}[5m])) BY (grpc_method) / sum(rate(etcd_grpc_total{job="etcd"}[5m])) BY (grpc_method) > 0.01
             for: 10m
             labels:
@@ -530,7 +1061,7 @@ conf:
             annotations:
               description: '{{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}'
               summary: a high number of gRPC requests are failing
-          - alert: HighNumberOfFailedGRPCRequests
+          - alert: etcd_HighNumberOfFailedGRPCRequests
             expr: sum(rate(etcd_grpc_requests_failed_total{job="etcd"}[5m])) BY (grpc_method) / sum(rate(etcd_grpc_total{job="etcd"}[5m])) BY (grpc_method) > 0.05
             for: 5m
             labels:
@@ -538,7 +1069,7 @@ conf:
             annotations:
               description: '{{ $value }}% of requests for {{ $labels.grpc_method }} failed on etcd instance {{ $labels.instance }}'
               summary: a high number of gRPC requests are failing
-          - alert: GRPCRequestsSlow
+          - alert: etcd_GRPCRequestsSlow
             expr: histogram_quantile(0.99, rate(etcd_grpc_unary_requests_duration_seconds_bucket[5m])) > 0.15
             for: 10m
             labels:
@@ -546,7 +1077,7 @@ conf:
             annotations:
               description: on etcd instance {{ $labels.instance }} gRPC requests to {{ $labels.grpc_method }} are slow
               summary: slow gRPC requests
-          - alert: HighNumberOfFailedHTTPRequests
+          - alert: etcd_HighNumberOfFailedHTTPRequests
             expr: sum(rate(etcd_http_failed_total{job="etcd"}[5m])) BY (method) / sum(rate(etcd_http_received_total{job="etcd"}[5m])) BY (method) > 0.01
             for: 10m
             labels:
@@ -554,7 +1085,7 @@ conf:
             annotations:
               description: '{{ $value }}% of requests for {{ $labels.method }} failed on etcd instance {{ $labels.instance }}'
               summary: a high number of HTTP requests are failing
-          - alert: HighNumberOfFailedHTTPRequests
+          - alert: etcd_HighNumberOfFailedHTTPRequests
             expr: sum(rate(etcd_http_failed_total{job="etcd"}[5m])) BY (method) / sum(rate(etcd_http_received_total{job="etcd"}[5m])) BY (method) > 0.05
             for: 5m
             labels:
@@ -562,7 +1093,7 @@ conf:
             annotations:
               description: '{{ $value }}% of requests for {{ $labels.method }} failed on etcd instance {{ $labels.instance }}'
               summary: a high number of HTTP requests are failing
-          - alert: HTTPRequestsSlow
+          - alert: etcd_HTTPRequestsSlow
             expr: histogram_quantile(0.99, rate(etcd_http_successful_duration_seconds_bucket[5m])) > 0.15
             for: 10m
             labels:
@@ -570,7 +1101,7 @@ conf:
             annotations:
               description: on etcd instance {{ $labels.instance }} HTTP requests to {{ $labels.method }} are slow
               summary: slow HTTP requests
-          - alert: EtcdMemberCommunicationSlow
+          - alert: etcd_EtcdMemberCommunicationSlow
             expr: histogram_quantile(0.99, rate(etcd_network_member_round_trip_time_seconds_bucket[5m])) > 0.15
             for: 10m
             labels:
@@ -578,14 +1109,14 @@ conf:
             annotations:
               description: etcd instance {{ $labels.instance }} member communication with {{ $labels.To }} is slow
               summary: etcd member communication is slow
-          - alert: HighNumberOfFailedProposals
+          - alert: etcd_HighNumberOfFailedProposals
             expr: increase(etcd_server_proposals_failed_total{job="etcd"}[1h]) > 5
             labels:
               severity: warning
             annotations:
               description: etcd instance {{ $labels.instance }} has seen {{ $value }} proposal failures within the last hour
               summary: a high number of proposals within the etcd cluster are failing
-          - alert: HighFsyncDurations
+          - alert: etcd_HighFsyncDurations
             expr: histogram_quantile(0.99, rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m])) > 0.5
             for: 10m
             labels:
@@ -593,7 +1124,7 @@ conf:
             annotations:
               description: etcd instance {{ $labels.instance }} fync durations are high
               summary: high fsync durations
-          - alert: HighCommitDurations
+          - alert: etcd_HighCommitDurations
             expr: histogram_quantile(0.99, rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])) > 0.25
             for: 10m
             labels:
@@ -626,7 +1157,7 @@ conf:
         - name: kube-controller-manager.rules
           rules:
           - alert: K8SControllerManagerDown
-            expr: absent(up{job="kube-controller-manager"} == 1)
+            expr: absent(up{job="kube-controller-manager-discovery"} == 1)
             for: 5m
             labels:
               severity: critical
@@ -757,3 +1288,704 @@ conf:
             expr: histogram_quantile(0.5, sum(scheduler_binding_latency_microseconds_bucket) BY (le, cluster)) / 1e+06
             labels:
               quantile: "0.5"
+          - alert: kube_statefulset_replicas_unavailable
+            expr: kube_statefulset_status_replicas < kube_statefulset_replicas
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'statefulset {{$labels.statefulset}} has {{$value}} replicas, which is less than desired'
+              summary: '{{$labels.statefulset}}: has inssuficient replicas.'
+          - alert: kube_daemonsets_misscheduled
+            expr: kube_daemonset_status_number_misscheduled > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Daemonset {{$labels.daemonset}} is running where it is not supposed to run'
+              summary: 'Daemonsets not scheduled correctly'
+          - alert: kube_daemonsets_not_scheduled
+            expr: kube_daemonset_status_desired_number_scheduled - kube_daemonset_status_current_number_scheduled > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: '{{ $value }} of Daemonset {{$labels.daemonset}} scheduled which is less than desired number'
+              summary: 'Less than desired number of daemonsets scheduled'
+          - alert: kube_deployment_replicas_unavailable
+            expr: kube_deployment_status_replicas_unavailable > 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'deployment {{$labels.deployment}} has {{$value}} replicas unavailable'
+              summary: '{{$labels.deployment}}: has inssuficient replicas.'
+          - alert: kube_rollingupdate_deployment_replica_less_than_spec_max_unavailable
+            expr: kube_deployment_status_replicas_available - kube_deployment_spec_strategy_rollingupdate_max_unavailable < 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'deployment {{$labels.deployment}} has {{$value}} replicas available which is less than specified as max unavailable during a rolling update'
+              summary: '{{$labels.deployment}}: has inssuficient replicas during a rolling update.'
+          - alert: kube_job_status_failed
+            expr: kube_job_status_failed > 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'Job {{$labels.exported_job}} is in failed status'
+              summary: '{{$labels.exported_job}} has failed status'
+          - alert: kube_pod_status_pending
+            expr: kube_pod_status_phase{phase="Pending"} == 1
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} has been in pending status for more than 10 minutes'
+              summary: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} in pending status'
+          - alert: kube_pod_error_image_pull
+            expr: kube_pod_container_status_waiting_reason {reason="ErrImagePull"} == 1
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} has an Image pull error for more than 10 minutes'
+              summary: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} in error status'
+          - alert: kube_pod_status_error_image_pull
+            expr: kube_pod_container_status_waiting_reason {reason="ErrImagePull"} == 1
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} has an Image pull error for more than 10 minutes'
+              summary: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} in error status'
+          - alert: kube_replicaset_missing_replicas
+            expr:  kube_replicaset_spec_replicas -  kube_replicaset_status_ready_replicas > 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'Replicaset {{$labels.replicaset}} is missing desired number of replicas for more than 10 minutes'
+              summary: 'Replicaset {{$labels.replicaset}} is missing replicas'
+          - alert: kube_pod_container_terminated
+            expr: kube_pod_container_status_terminated_reason{reason=~"OOMKilled|Error|ContainerCannotRun"} > 0
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} has a container terminated for more than 10 minutes'
+              summary: 'Pod {{$labels.pod}} in namespace {{$labels.namespace}} in error status'
+          - alert: volume_claim_capacity_high_utilization
+            expr: (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) > 0.80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'volume claim {{$labels.persistentvolumeclaim}} usage has exceeded 80% of total capacity'
+              summary: '{{$labels.persistentvolumeclaim}} usage has exceeded 80% of total capacity.'
+      basic_linux:
+        groups:
+        - name: basic_linux.rules
+          rules:
+          - alert: node_filesystem_full_80percent
+            expr: sort(node_filesystem_free{device!="ramfs"} < node_filesystem_size{device!="ramfs"}
+              * 0.2) / 1024 ^ 3
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} device {{$labels.device}} on {{$labels.mountpoint}}
+                got less than 10% space left on its filesystem.'
+              summary: '{{$labels.alias}}: Filesystem is running out of space soon.'
+          - alert: node_filesystem_full_in_4h
+            expr: predict_linear(node_filesystem_free{device!="ramfs"}[1h], 4 * 3600) <= 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} device {{$labels.device}} on {{$labels.mountpoint}}
+                is running out of space of in approx. 4 hours'
+              summary: '{{$labels.alias}}: Filesystem is running out of space in 4 hours.'
+          - alert: node_filedescriptors_full_in_3h
+            expr: predict_linear(node_filefd_allocated[1h], 3 * 3600) >= node_filefd_maximum
+            for: 20m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} is running out of available file descriptors
+                in approx. 3 hours'
+              summary: '{{$labels.alias}} is running out of available file descriptors in
+                3 hours.'
+          - alert: node_load1_90percent
+            expr: node_load1 / ON(alias) count(node_cpu{mode="system"}) BY (alias) >= 0.9
+            for: 1h
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} is running with > 90% total load for at least
+                1h.'
+              summary: '{{$labels.alias}}: Running on high load.'
+          - alert: node_cpu_util_90percent
+            expr: 100 - (avg(irate(node_cpu{mode="idle"}[5m])) BY (alias) * 100) >= 90
+            for: 1h
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} has total CPU utilization over 90% for at least
+                1h.'
+              summary: '{{$labels.alias}}: High CPU utilization.'
+          - alert: node_ram_using_90percent
+            expr: node_memory_MemFree + node_memory_Buffers + node_memory_Cached < node_memory_MemTotal
+              * 0.1
+            for: 30m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} is using at least 90% of its RAM for at least
+                30 minutes now.'
+              summary: '{{$labels.alias}}: Using lots of RAM.'
+          - alert: node_swap_using_80percent
+            expr: node_memory_SwapTotal - (node_memory_SwapFree + node_memory_SwapCached)
+              > node_memory_SwapTotal * 0.8
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} is using 80% of its swap space for at least
+                10 minutes now.'
+              summary: '{{$labels.alias}}: Running out of swap soon.'
+          - alert: node_high_cpu_load
+            expr: node_load15 / on(alias) count(node_cpu{mode="system"}) by (alias) >= 0
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              description: '{{$labels.alias}} is running with load15 > 1 for at least 5 minutes: {{$value}}'
+              summary: '{{$labels.alias}}: Running on high load: {{$value}}'
+          - alert: node_high_memory_load
+            expr: (sum(node_memory_MemTotal) - sum(node_memory_MemFree + node_memory_Buffers
+              + node_memory_Cached)) / sum(node_memory_MemTotal) * 100 > 85
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              description: Host memory usage is {{ humanize $value }}%. Reported by
+                instance {{ $labels.instance }} of job {{ $labels.job }}.
+              summary: Server memory is almost full
+          - alert: node_high_storage_load
+            expr: (node_filesystem_size{mountpoint="/"} - node_filesystem_free{mountpoint="/"})
+              / node_filesystem_size{mountpoint="/"} * 100 > 85
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              description: Host storage usage is {{ humanize $value }}%. Reported by
+                instance {{ $labels.instance }} of job {{ $labels.job }}.
+              summary: Server storage is almost full
+          - alert: node_high_swap
+            expr: (node_memory_SwapTotal - node_memory_SwapFree) < (node_memory_SwapTotal
+              * 0.4)
+            for: 1m
+            labels:
+              severity: warning
+            annotations:
+              description: Host system has a high swap usage of {{ humanize $value }}. Reported
+                by instance {{ $labels.instance }} of job {{ $labels.job }}.
+              summary: Server has a high swap usage
+          - alert: node_high_network_drop_rcv
+            expr: node_network_receive_drop{device!="lo"} > 3000
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              description: Host system has an unusally high drop in network reception ({{
+                humanize $value }}). Reported by instance {{ $labels.instance }} of job {{
+                $labels.job }}
+              summary: Server has a high receive drop
+          - alert: node_high_network_drop_send
+            expr: node_network_transmit_drop{device!="lo"} > 3000
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              description: Host system has an unusally high drop in network transmission ({{
+                humanize $value }}). Reported by instance {{ $labels.instance }} of job {{
+                $labels.job }}
+              summary: Server has a high transmit drop
+          - alert: node_high_network_errs_rcv
+            expr: node_network_receive_errs{device!="lo"} > 3000
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              description: Host system has an unusally high error rate in network reception
+                ({{ humanize $value }}). Reported by instance {{ $labels.instance }} of job
+                {{ $labels.job }}
+              summary: Server has unusual high reception errors
+          - alert: node_high_network_errs_send
+            expr: node_network_transmit_errs{device!="lo"} > 3000
+            for: 30s
+            labels:
+              severity: warning
+            annotations:
+              description: Host system has an unusally high error rate in network transmission
+                ({{ humanize $value }}). Reported by instance {{ $labels.instance }} of job
+                {{ $labels.job }}
+              summary: Server has unusual high transmission errors
+          - alert: node_network_conntrack_usage_80percent
+            expr: sort(node_nf_conntrack_entries{job="node-exporter"} > node_nf_conntrack_entries_limit{job="node-exporter"}  * 0.8)
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.instance}} has network conntrack entries of {{ $value }} which is more than 80% of maximum limit'
+              summary: '{{$labels.instance}}: available network conntrack entries are low.'
+          - alert: node_entropy_available_low
+            expr: node_entropy_available_bits < 300
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.instance}} has available entropy bits of {{ $value }} which is less than required of 300'
+              summary: '{{$labels.instance}}: is low on entropy bits.'
+          - alert: node_hwmon_high_cpu_temp
+            expr: node_hwmon_temp_crit_celsius*0.9 - node_hwmon_temp_celsius < 0 OR node_hwmon_temp_max_celsius*0.95 - node_hwmon_temp_celsius < 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} reports hwmon sensor {{$labels.sensor}}/{{$labels.chip}} temperature value is nearly critical: {{$value}}'
+              summary: '{{$labels.alias}}: Sensor {{$labels.sensor}}/{{$labels.chip}} temp is high: {{$value}}'
+          - alert: node_vmstat_paging_rate_high
+            expr: irate(node_vmstat_pgpgin[5m]) > 80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} has a memory paging rate of change higher than 80%: {{$value}}'
+              summary: '{{$labels.alias}}: memory paging rate is high: {{$value}}'
+          - alert: node_xfs_block_allocation_high
+            expr: 100*(node_xfs_extent_allocation_blocks_allocated_total{job="node-exporter", instance=~"172.17.0.1.*"} / (node_xfs_extent_allocation_blocks_freed_total{job="node-exporter", instance=~"172.17.0.1.*"} + node_xfs_extent_allocation_blocks_allocated_total{job="node-exporter", instance=~"172.17.0.1.*"})) > 80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} has xfs allocation blocks higher than 80%: {{$value}}'
+              summary: '{{$labels.alias}}: xfs block allocation high: {{$value}}'
+          - alert: node_network_bond_slaves_down
+            expr: node_net_bonding_slaves - node_net_bonding_slaves_active > 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{ $labels.master }} is missing {{ $value }} slave interface(s).'
+              summary: 'Instance {{ $labels.instance }}: {{ $labels.master }} missing {{ $value }} slave interface(s)'
+          - alert: node_numa_memory_used
+            expr: 100*node_memory_numa_MemUsed / node_memory_numa_MemTotal > 80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} has more than 80% NUMA memory usage: {{ $value }}'
+              summary: '{{$labels.alias}}: has high NUMA memory usage: {{$value}}'
+          - alert: node_ntp_clock_skew_high
+            expr: abs(node_ntp_drift_seconds) > 2
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.alias}} has time difference of more than 2 seconds compared to NTP server: {{ $value }}'
+              summary: '{{$labels.alias}}: time is skewed by : {{$value}} seconds'
+          - alert: node_disk_read_latency
+            expr: (rate(node_disk_read_time_ms[5m]) / rate(node_disk_reads_completed[5m])) > 10
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.device}} has a high read latency of {{ $value }}'
+              summary: 'High read latency observed for device {{ $labels.device }}'
+          - alert: node_disk_write_latency
+            expr: (rate(node_disk_write_time_ms[5m]) / rate(node_disk_writes_completed[5m])) > 10
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: '{{$labels.device}} has a high write latency of {{ $value }}'
+              summary: 'High write latency observed for device {{ $labels.device }}'
+      openstack:
+        groups:
+        - name: openstack.rules
+          rules:
+          - alert: os_glance_api_availability
+            expr:  check_glance_api != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Glance API is not available at {{$labels.url}} for more than 5 minutes'
+              summary: 'Glance API is not available at {{$labels.url}}'
+          - alert: os_nova_api_availability
+            expr:  check_nova_api != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Nova API is not available at {{$labels.url}} for more than 5 minutes'
+              summary: 'Nova API is not available at {{$labels.url}}'
+          - alert: os_keystone_api_availability
+            expr:  check_keystone_api != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Keystone API is not available at {{$labels.url}} for more than 5 minutes'
+              summary: 'Keystone API is not available at {{$labels.url}}'
+          - alert: os_neutron_api_availability
+            expr:  check_neutron_api != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Neutron API is not available at {{$labels.url}} for more than 5 minutes'
+              summary: 'Neutron API is not available at {{$labels.url}}'
+          - alert: os_swift_api_availability
+            expr:  check_swift_api != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Swift API is not available at {{$labels.url}} for more than 5 minutes'
+              summary: 'Swift API is not available at {{$labels.url}}'
+          - alert: os_cinder_api_availability
+            expr:  openstack_check_cinder_api != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Cinder API is not available at {{$labels.url}} for more than 5 minutes'
+              summary: 'Cinder API is not available at {{$labels.url}}'
+          - alert: os_cinder_scheduler_availability
+            expr:  openstack_services_cinder_cinder_scheduler != 1
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Cinder scheduler is not available for more than 5 minutes'
+              summary: 'Cinder scheduler is not available'
+          - alert: os_nova_compute_disabled
+            expr:  services_nova_compute_disabled_total > 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'nova-compute is disabled on certain hosts for more than 5 minutes'
+              summary: 'Openstack compute service nova-compute is disabled on some hosts'
+          - alert: os_nova_conductor_disabled
+            expr:  services_nova_conductor_disabled_total > 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'nova-conductor is disabled on certain hosts for more than 5 minutes'
+              summary: 'Openstack compute service nova-conductor is disabled on some hosts'
+          - alert: os_nova_consoleauth_disabled
+            expr:  services_nova_consoleauth_disabled_total > 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'nova-consoleauth is disabled on certain hosts for more than 5 minutes'
+              summary: 'Openstack compute service nova-consoleauth is disabled on some hosts'
+          - alert: os_nova_scheduler_disabled
+            expr:  services_nova_scheduler_disabled_total > 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'nova-scheduler is disabled on certain hosts for more than 5 minutes'
+              summary: 'Openstack compute service nova-scheduler is disabled on some hosts'
+      ceph:
+        groups:
+        - name: ceph.rules
+          rules:
+          - alert: ceph_monitor_quorum_low
+            expr:  ceph_monitor_quorum_count < 3
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'ceph monitor quorum has been less than 3 for more than 5 minutes'
+              summary: 'ceph high availability is at risk'
+          - alert: ceph_cluster_usage_high
+            expr:  100* ceph_cluster_used_bytes/ceph_cluster_capacity_bytes > 80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'ceph cluster capacity usage more than 80 percent'
+              summary: 'ceph cluster usage is more than 80 percent'
+          - alert: ceph_placement_group_degrade_pct_high
+            expr:  100*ceph_degraded_pgs/ceph_total_pgs > 80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'ceph placement group degradation is more than 80 percent'
+              summary: 'ceph placement groups degraded'
+          - alert: ceph_osd_down_pct_high
+            expr:  100* ceph_osds_down/(ceph_osds_down+ceph_osds_up) > 80
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'ceph OSDs down percent is more than 80 percent'
+              summary: 'ceph OSDs down percent is high'
+          - alert: ceph_monitor_clock_skew_high
+            expr:  ceph_monitor_clock_skew_seconds > 2
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'ceph monitors clock skew on {{$labels.instance}} is more than 2 seconds'
+              summary: 'ceph monitor clock skew high'
+      fluentd:
+        groups:
+        - name: fluentd.rules
+          rules:
+          - alert: fluentd_not_running
+            expr:  fluentd_up == 0
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'fluentd is down on {{$labels.instance}} for more than 5 minutes'
+              summary: 'Fluentd is down'
+      calico:
+        groups:
+        - name: calico.rules
+          rules:
+          - alert: calico_datapane_failures_high_1h
+            expr: absent(felix_int_dataplane_failures) OR increase(felix_int_dataplane_failures[1h]) > 5
+            labels:
+              severity: page
+            annotations:
+              description: 'Felix instance {{ $labels.instance }} has seen {{ $value }} dataplane failures within the last hour'
+              summary: 'A high number of dataplane failures within Felix are happening'
+          - alert: calico_datapane_address_msg_batch_size_high_5m
+            expr: absent(felix_int_dataplane_addr_msg_batch_size_sum) OR absent(felix_int_dataplane_addr_msg_batch_size_count) OR (felix_int_dataplane_addr_msg_batch_size_sum/felix_int_dataplane_addr_msg_batch_size_count) > 5
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Felix instance {{ $labels.instance }} has seen a high value of {{ $value }} dataplane address message batch size'
+              summary: 'Felix address message batch size is higher'
+          - alert: calico_datapane_iface_msg_batch_size_high_5m
+            expr: absent(felix_int_dataplane_iface_msg_batch_size_sum) OR absent(felix_int_dataplane_iface_msg_batch_size_count) OR (felix_int_dataplane_iface_msg_batch_size_sum/felix_int_dataplane_iface_msg_batch_size_count) > 5
+            for: 5m
+            labels:
+              severity: page
+            annotations:
+              description: 'Felix instance {{ $labels.instance }} has seen a high value of {{ $value }} dataplane interface message batch size'
+              summary: 'Felix interface message batch size is higher'
+          - alert: calico_ipset_errors_high_1h
+            expr: absent(felix_ipset_errors) OR increase(felix_ipset_errors[1h]) > 5
+            labels:
+              severity: page
+            annotations:
+              description: 'Felix instance {{ $labels.instance }} has seen {{ $value }} ipset errors within the last hour'
+              summary: 'A high number of ipset errors within Felix are happening'
+          - alert: calico_iptable_save_errors_high_1h
+            expr: absent(felix_iptables_save_errors) OR increase(felix_iptables_save_errors[1h]) > 5
+            labels:
+              severity: page
+            annotations:
+              description: 'Felix instance {{ $labels.instance }} has seen {{ $value }} iptable save errors within the last hour'
+              summary: 'A high number of iptable save errors within Felix are happening'
+          - alert: calico_iptable_restore_errors_high_1h
+            expr: absent(felix_iptables_restore_errors) OR increase(felix_iptables_restore_errors[1h]) > 5
+            labels:
+              severity: page
+            annotations:
+              description: 'Felix instance {{ $labels.instance }} has seen {{ $value }} iptable restore errors within the last hour'
+              summary: 'A high number of iptable restore errors within Felix are happening'
+      rabbitmq:
+        groups:
+        - name: rabbitmq.rules
+          rules:
+          - alert: rabbitmq_network_pratitions_detected
+            expr: min(partitions) by(instance) > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ at {{ $labels.instance }} has {{ $value }} partitions'
+              summary: 'RabbitMQ Network partitions detected'
+          - alert: rabbitmq_down
+            expr:  min(rabbitmq_up) by(instance) != 1
+            for: 10m
+            labels:
+              severity: page
+            annotations:
+              description: 'RabbitMQ Server instance {{ $labels.instance }} is down'
+              summary: 'The RabbitMQ Server instance at {{ $labels.instance }} has been down the last 10 mins'
+          - alert: rabbitmq_file_descriptor_usage_high
+            expr:  fd_used * 100 /fd_total > 80
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ Server instance {{ $labels.instance }} has high file descriptor usage of {{ $value }} percent.'
+              summary: 'RabbitMQ file descriptors usage is high for last 10 mins'
+          - alert: rabbitmq_node_disk_free_alarm
+            expr:  node_disk_free_alarm > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ Server instance {{ $labels.instance }} has low disk free space available.'
+              summary: 'RabbitMQ disk space usage is high'
+          - alert: rabbitmq_node_memory_alarm
+            expr:  node_mem_alarm > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ Server instance {{ $labels.instance }} has low free memory.'
+              summary: 'RabbitMQ memory usage is high'
+          - alert: rabbitmq_less_than_3_nodes
+            expr:  running < 3
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ Server has less than 3 nodes running.'
+              summary: 'RabbitMQ server is at risk of loosing data'
+          - alert: rabbitmq_queue_messages_returned_high
+            expr:  queue_messages_returned_total/queue_messages_published_total * 100 > 50
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ Server is returing more than 50 percent of messages received.'
+              summary: 'RabbitMQ server is returning more than 50 percent of messages received.'
+          - alert: rabbitmq_consumers_low_utilization
+            expr:  queue_consumer_utilisation < .4
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ consumers message consumption speed is low'
+              summary: 'RabbitMQ consumers message consumption speed is low'
+          - alert: rabbitmq_high_message_load
+            expr:  queue_messages_total > 17000 or increase(queue_messages_total[5m]) > 4000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              description: 'RabbitMQ has high message load. Total Queue depth > 17000 or growth more than 4000 messages.'
+              summary: 'RabbitMQ has high message load'
+      elasticsearch:
+        groups:
+        - name: elasticsearch.rules
+          rules:
+          - alert: es_high_process_open_files_count
+            expr: sum(elasticsearch_process_open_files_count) by (host) > 64000
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Elasticsearch at {{ $labels.host }} has more than 64000 process open file count.'
+              summary: 'Elasticsearch has a very high process open file count.'
+          - alert: es_high_process_cpu_percent
+            expr: elasticsearch_process_cpu_percent > 95
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Elasticsearch at {{ $labels.instance }} has high process cpu percent of {{ $value }}.'
+              summary: 'Elasticsearch process cpu usage is more than 95 percent.'
+          - alert: es_fs_usage_high
+            expr: (100 * (elasticsearch_filesystem_data_size_bytes - elasticsearch_filesystem_data_free_bytes) / elasticsearch_filesystem_data_size_bytes) > 80
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Elasticsearch at {{ $labels.instance }} has filesystem usage of {{ $value }}.'
+              summary: 'Elasticsearch filesystem usage is high.'
+          - alert: es_unassigned_shards
+            expr: elasticsearch_cluster_health_unassigned_shards > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Elasticsearch has {{ $value }} unassigned shards.'
+              summary: 'Elasticsearch has unassigned shards and hence a unhealthy cluster state.'
+          - alert: es_cluster_health_timed_out
+            expr: elasticsearch_cluster_health_timed_out > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Elasticsearch cluster health status call timedout {{ $value }} times.'
+              summary: 'Elasticsearch cluster health status calls are timing out.'
+          - alert: es_cluster_health_status_alert
+            expr: elasticsearch_cluster_health_status > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Elasticsearch cluster health status is not green. One or more shards or replicas are unallocated.'
+              summary: 'Elasticsearch cluster health status is not green.'
+          - alert: es_cluster_health_too_few_nodes_running
+            expr: elasticsearch_cluster_health_number_of_nodes < 3
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'There are only {{$value}} < 3 ElasticSearch nodes running'
+              summary: 'ElasticSearch running on less than 3 nodes'
+          - alert: es_cluster_health_too_few_data_nodes_running
+            expr: elasticsearch_cluster_health_number_of_data_nodes < 3
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'There are only {{$value}} < 3 ElasticSearch data nodes running'
+              summary: 'ElasticSearch running on less than 3 data nodes'
+      mariadb:
+        groups:
+        - name: mariadb.rules
+          rules:
+          - alert: mariadb_table_lock_wait_high
+            expr: 100 * mysql_global_status_table_locks_waited/(mysql_global_status_table_locks_waited + mysql_global_status_table_locks_immediate) > 30
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'Mariadb has high table lock waits of {{ $value }} percentage'
+              summary: 'Mariadb table lock waits are high'
+          - alert: mariadb_node_not_ready
+            expr:  mysql_global_status_wsrep_ready != 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: '{{$labels.job}} on {{$labels.instance}} is not ready.'
+              summary: 'Galera cluster node not ready'
+          - alert: mariadb_galera_node_out_of_sync
+            expr:  mysql_global_status_wsrep_local_state != 4 AND mysql_global_variables_wsrep_desync == 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: '{{$labels.job}} on {{$labels.instance}} is not in sync ({{$value}} != 4)'
+              summary: 'Galera cluster node out of sync'
+          - alert: mariadb_innodb_replication_fallen_behind
+            expr:  (mysql_global_variables_innodb_replication_delay > 30) AND on (instance) (predict_linear(mysql_global_variables_innodb_replication_delay[5m], 60*2) > 0)
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              description: 'The mysql innodb replication has fallen behind and is not recovering'
+              summary: 'MySQL innodb replication is lagging'

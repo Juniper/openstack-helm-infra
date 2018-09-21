@@ -24,6 +24,8 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: grafana-db-session-sync
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
 spec:
   template:
     metadata:
@@ -33,7 +35,7 @@ spec:
       serviceAccountName: {{ $serviceAccountName }}
       restartPolicy: OnFailure
       nodeSelector:
-        {{ .Values.labels.job.node_selector_key }}: {{ .Values.labels.job.node_selector_value }}
+        {{ .Values.labels.job.node_selector_key }}: {{ .Values.labels.job.node_selector_value | quote }}
       initContainers:
 {{ tuple $envAll "db_session_sync" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
@@ -49,13 +51,13 @@ spec:
           command:
             - /tmp/db-session-sync.py
           volumeMounts:
-          - name: grafana-bin
-            mountPath: /tmp/db-session-sync.py
-            subPath: db-session-sync.py
-            readOnly: true
+            - name: grafana-bin
+              mountPath: /tmp/db-session-sync.py
+              subPath: db-session-sync.py
+              readOnly: true
       volumes:
-      - name: grafana-bin
-        configMap:
-          name: grafana-bin
-          defaultMode: 0555
+        - name: grafana-bin
+          configMap:
+            name: grafana-bin
+            defaultMode: 0555
 {{- end }}

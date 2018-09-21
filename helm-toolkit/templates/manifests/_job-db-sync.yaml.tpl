@@ -23,18 +23,17 @@ limitations under the License.
 {{- $envAll := index . "envAll" -}}
 {{- $serviceName := index . "serviceName" -}}
 {{- $nodeSelector := index . "nodeSelector" | default ( dict $envAll.Values.labels.job.node_selector_key $envAll.Values.labels.job.node_selector_value ) -}}
-{{- $dependencies := $envAll.Values.dependencies.static.db_sync }}
 {{- $configMapBin := index . "configMapBin" | default (printf "%s-%s" $serviceName "bin" ) -}}
 {{- $configMapEtc := index . "configMapEtc" | default (printf "%s-%s" $serviceName "etc" ) -}}
 {{- $podVolMounts := index . "podVolMounts" | default false -}}
 {{- $podVols := index . "podVols" | default false -}}
 {{- $podEnvVars := index . "podEnvVars" | default false -}}
-{{- $dbToSync := index . "dbToSync" | default ( dict "configFile" (printf "/etc/%s/%s.conf" $serviceName $serviceName ) "image" ( index $envAll.Values.images.tags ( printf "%s_db_sync" $serviceName )) ) -}}
+{{- $dbToSync := index . "dbToSync" | default ( dict "configFile" (printf "/etc/%s/%s.conf" $serviceName $serviceName ) "logConfigFile" (printf "/etc/%s/logging.conf" $serviceName ) "image" ( index $envAll.Values.images.tags ( printf "%s_db_sync" $serviceName )) ) -}}
 
 {{- $serviceNamePretty := $serviceName | replace "_" "-" -}}
 
 {{- $serviceAccountName := printf "%s-%s" $serviceNamePretty "db-sync" }}
-{{ tuple $envAll $dependencies $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
+{{ tuple $envAll "db_sync" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -51,7 +50,7 @@ spec:
       nodeSelector:
 {{ toYaml $nodeSelector | indent 8 }}
       initContainers:
-{{ tuple $envAll $dependencies list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
+{{ tuple $envAll "db_sync" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: {{ printf "%s-%s" $serviceNamePretty "db-sync" | quote }}
           image: {{ $dbToSync.image | quote }}
@@ -74,6 +73,10 @@ spec:
               mountPath: {{ $dbToSync.configFile | quote }}
               subPath: {{ base $dbToSync.configFile | quote }}
               readOnly: true
+            - name: db-sync-conf
+              mountPath: {{ $dbToSync.logConfigFile | quote }}
+              subPath: {{ base $dbToSync.logConfigFile | quote }}
+              readOnly: true
 {{- if $podVolMounts }}
 {{ $podVolMounts | toYaml | indent 12 }}
 {{- end }}
@@ -85,8 +88,8 @@ spec:
         - name: etc-service
           emptyDir: {}
         - name: db-sync-conf
-          configMap:
-            name: {{ $configMapEtc | quote }}
+          secret:
+            secretName: {{ $configMapEtc | quote }}
             defaultMode: 0444
 {{- if $podVols }}
 {{ $podVols | toYaml | indent 8 }}

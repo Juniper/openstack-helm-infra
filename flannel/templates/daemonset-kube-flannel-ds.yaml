@@ -58,15 +58,22 @@ subjects:
   name: {{ $serviceAccountName }}
   namespace: {{ .Release.Namespace }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: kube-flannel-ds
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
   labels:
     tier: node
     app: flannel
 {{ tuple $envAll "flannel" "node" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
+  selector:
+    matchLabels:
+      tier: node
+      app: flannel
+{{ tuple $envAll "flannel" "node" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
   template:
     metadata:
       labels:
@@ -87,9 +94,9 @@ spec:
       containers:
         - name: kube-flannel
 {{ tuple $envAll "flannel" | include "helm-toolkit.snippets.image" | indent 10 }}
-          command: [ "/opt/bin/flanneld", "--ip-masq", "--kube-subnet-mgr" ]
           securityContext:
             privileged: true
+          command: [ "/opt/bin/flanneld", "--ip-masq", "--kube-subnet-mgr" ]
           env:
             - name: POD_NAME
               valueFrom:

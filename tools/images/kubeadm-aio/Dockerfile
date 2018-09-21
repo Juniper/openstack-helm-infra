@@ -12,20 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#https://github.com/kubernetes/kubernetes/tree/master/build/debian-base
-FROM gcr.io/google-containers/debian-base-amd64:0.3
+FROM docker.io/ubuntu:xenial
 MAINTAINER pete.birley@att.com
 
-ARG KUBE_VERSION="v1.9.3"
+ARG UBUNTU_URL=http://archive.ubuntu.com/ubuntu/
+ARG ALLOW_UNAUTHENTICATED=false
+ARG PIP_INDEX_URL=https://pypi.python.org/simple/
+ARG PIP_TRUSTED_HOST=pypi.python.org
+ENV PIP_INDEX_URL=${PIP_INDEX_URL}
+ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
+
+COPY ./tools/images/kubeadm-aio/sources.list /etc/apt/
+RUN sed -i \
+        -e "s|%%UBUNTU_URL%%|${UBUNTU_URL}|g" \
+        /etc/apt/sources.list ;\
+    echo "APT::Get::AllowUnauthenticated \"${ALLOW_UNAUTHENTICATED}\";" > /etc/apt/apt.conf.d/allow-unathenticated
+
+ARG KUBE_VERSION="v1.10.7"
 ENV KUBE_VERSION ${KUBE_VERSION}
 
 ARG CNI_VERSION="v0.6.0"
 ENV CNI_VERSION ${CNI_VERSION}
 
-ARG HELM_VERSION="v2.7.2"
+ARG HELM_VERSION="v2.10.0"
 ENV HELM_VERSION ${HELM_VERSION}
 
-ARG CHARTS="calico,flannel,tiller,kube-dns"
+ARG CHARTS="calico,flannel,tiller,kube-dns,kubernetes-keystone-webhook"
 ENV CHARTS ${CHARTS}
 
 ARG HTTP_PROXY=""

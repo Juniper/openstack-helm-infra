@@ -72,12 +72,19 @@ rules:
       - list
       - watch
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: fluentd
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "fluentd" "internal" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.fluentd }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "fluentd" "internal" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll  | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
@@ -91,14 +98,13 @@ spec:
       affinity:
 {{ tuple $envAll "fluentd" "internal" | include "helm-toolkit.snippets.kubernetes_pod_anti_affinity" | indent 8 }}
       nodeSelector:
-        {{ .Values.labels.fluentd.node_selector_key }}: {{ .Values.labels.fluentd.node_selector_value }}
+        {{ .Values.labels.fluentd.node_selector_key }}: {{ .Values.labels.fluentd.node_selector_value | quote }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.fluentd.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "fluentd" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: fluentd
-          image: {{ .Values.images.tags.fluentd }}
-          imagePullPolicy: {{ .Values.images.pull_policy }}
+{{ tuple $envAll "fluentd" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.fluentd | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - /tmp/fluentd.sh
@@ -108,6 +114,11 @@ spec:
               containerPort: {{ tuple "fluentd" "internal" "service" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
             - name: metrics
               containerPort: {{ tuple "fluentd" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ tuple "fluentd" "internal" "service" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
           env:
             - name: FLUENTD_PORT
               value: {{ tuple "fluentd" "internal" "service" . | include "helm-toolkit.endpoints.endpoint_port_lookup" | quote }}
@@ -127,10 +138,10 @@ spec:
                   key: ELASTICSEARCH_PASSWORD
           volumeMounts:
             - name: pod-etc-fluentd
-              mountPath: /etc/td-agent
+              mountPath: /fluentd/etc
             - name: fluent-logging-etc
-              mountPath: /etc/td-agent/td-agent.conf
-              subPath: td-agent.conf
+              mountPath: /fluentd/etc/fluent.conf
+              subPath: fluent.conf
               readOnly: true
             - name: fluent-logging-bin
               mountPath: /tmp/fluentd.sh
@@ -141,8 +152,8 @@ spec:
         - name: pod-etc-fluentd
           emptyDir: {}
         - name: fluent-logging-etc
-          configMap:
-            name: fluent-logging-etc
+          secret:
+            secretName: fluent-logging-etc
             defaultMode: 0444
         - name: fluent-logging-bin
           configMap:

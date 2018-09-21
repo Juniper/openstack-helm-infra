@@ -25,19 +25,28 @@ limitations under the License.
 {{- $__rule_files := append $envAll.Values.__rule_files $rulesFile }}
 {{- $_ := set $envAll.Values "__rule_files" $__rule_files }}
 {{ end }}
-{{- set .Values.conf.prometheus.scrape_configs "rule_files" $envAll.Values.__rule_files | quote | trunc 0 -}}
+{{- $_ := set .Values.conf.prometheus.scrape_configs "rule_files" $envAll.Values.__rule_files -}}
 {{- end -}}
+
+{{- if not (empty $envAll.Values.conf.prometheus.scrape_configs.scrape_configs) }}
+{{- $_ := set $envAll.Values "__updated_scrape_configs" ( list ) }}
+{{- $promScrapeTarget := first $envAll.Values.conf.prometheus.scrape_configs.scrape_configs }}
+{{- if (empty $promScrapeTarget.basic_auth) }}
+{{- $_ := set $promScrapeTarget "basic_auth" $envAll.Values.endpoints.monitoring.auth.admin }}
+{{- end }}
+{{- end }}
 
 ---
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: prometheus-etc
+type: Opaque
 data:
-  prometheus.yml: |
-{{ toYaml .Values.conf.prometheus.scrape_configs | indent 4 }}
+  prometheus.yml: {{ toYaml .Values.conf.prometheus.scrape_configs | b64enc }}
 {{ range $key, $value := .Values.conf.prometheus.rules }}
-  {{ $key }}.rules: |
-{{ toYaml $value | indent 4 }}
+  {{ $key }}.rules: {{ toYaml $value | b64enc }}
 {{ end }}
+#NOTE(srwilkers): this must be last, to work round helm ~2.7 bug.
+{{- include "helm-toolkit.snippets.values_template_renderer" (dict "envAll" $envAll "template" .Values.conf.httpd "key" "httpd.conf" "format" "Secret") | indent 2 }}
 {{- end }}

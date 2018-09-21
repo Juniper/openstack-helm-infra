@@ -23,13 +23,20 @@ limitations under the License.
 {{- $serviceAccountName := "alertmanager"}}
 {{ tuple $envAll "alertmanager" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: alertmanager
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "alertmanager" "server" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   serviceName: {{ tuple "alerts" "discovery" . | include "helm-toolkit.endpoints.hostname_short_endpoint_lookup" }}
   replicas: {{ .Values.pod.replicas.alertmanager }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "alertmanager" "server" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
   template:
     metadata:
       labels:
@@ -42,15 +49,15 @@ spec:
       affinity:
 {{ tuple $envAll "alertmanager" "server" | include "helm-toolkit.snippets.kubernetes_pod_anti_affinity" | indent 8 }}
       nodeSelector:
-        {{ .Values.labels.alertmanager.node_selector_key }}: {{ .Values.labels.alertmanager.node_selector_value }}
+        {{ .Values.labels.alertmanager.node_selector_key }}: {{ .Values.labels.alertmanager.node_selector_value | quote }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.alertmanager.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "alertmanager" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
         - name: alertmanager-perms
 {{ tuple $envAll "alertmanager" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll $envAll.Values.pod.resources.alertmanager | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           securityContext:
             runAsUser: 0
-{{ tuple $envAll $envAll.Values.pod.resources.alertmanager | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - chown
             - -R
@@ -62,6 +69,7 @@ spec:
       containers:
         - name: alertmanager
 {{ tuple $envAll "alertmanager" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll $envAll.Values.pod.resources.alertmanager | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - /tmp/alertmanager.sh
             - start
@@ -71,7 +79,6 @@ spec:
                 command:
                   - /tmp/alertmanager.sh
                   - stop
-{{ tuple $envAll $envAll.Values.pod.resources.alertmanager | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           env:
             - name: DISCOVERY_SVC
               value: {{ tuple "alerts" "discovery" . | include "helm-toolkit.endpoints.hostname_short_endpoint_lookup" }}
@@ -96,8 +103,8 @@ spec:
               subPath: alert-templates.tmpl
               readOnly: true
             - name: alertmanager-etc
-              mountPath: /etc/config/alertmanager.yml
-              subPath: alertmanager.yml
+              mountPath: /etc/alertmanager/config.yml
+              subPath: config.yml
               readOnly: true
             - name: alertmanager-bin
               mountPath: /tmp/alertmanager.sh

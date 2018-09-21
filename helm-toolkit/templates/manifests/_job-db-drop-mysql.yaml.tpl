@@ -28,16 +28,15 @@ limitations under the License.
 {{- $envAll := index . "envAll" -}}
 {{- $serviceName := index . "serviceName" -}}
 {{- $nodeSelector := index . "nodeSelector" | default ( dict $envAll.Values.labels.job.node_selector_key $envAll.Values.labels.job.node_selector_value ) -}}
-{{- $dependencies := index . "dependencies" | default $envAll.Values.dependencies.static.db_drop -}}
 {{- $configMapBin := index . "configMapBin" | default (printf "%s-%s" $serviceName "bin" ) -}}
 {{- $configMapEtc := index . "configMapEtc" | default (printf "%s-%s" $serviceName "etc" ) -}}
-{{- $dbToDrop := index . "dbToDrop" | default ( dict "adminSecret" $envAll.Values.secrets.oslo_db.admin "configFile" (printf "/etc/%s/%s.conf" $serviceName $serviceName ) "configDbSection" "database" "configDbKey" "connection" ) -}}
+{{- $dbToDrop := index . "dbToDrop" | default ( dict "adminSecret" $envAll.Values.secrets.oslo_db.admin "configFile" (printf "/etc/%s/%s.conf" $serviceName $serviceName ) "logConfigFile" (printf "/etc/%s/logging.conf" $serviceName ) "configDbSection" "database" "configDbKey" "connection" ) -}}
 {{- $dbsToDrop := default (list $dbToDrop) (index . "dbsToDrop") }}
 
 {{- $serviceNamePretty := $serviceName | replace "_" "-" -}}
 
 {{- $serviceAccountName := printf "%s-%s" $serviceNamePretty "db-drop" }}
-{{ tuple $envAll $dependencies $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
+{{ tuple $envAll "db_drop" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -57,7 +56,7 @@ spec:
       nodeSelector:
 {{ toYaml $nodeSelector | indent 8 }}
       initContainers:
-{{ tuple $envAll $dependencies list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
+{{ tuple $envAll "db_drop" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
 {{- range $key1, $dbToDrop := $dbsToDrop }}
 {{ $dbToDropType := default "oslo" $dbToDrop.inputType }}
@@ -100,6 +99,10 @@ spec:
               mountPath: {{ $dbToDrop.configFile | quote }}
               subPath: {{ base $dbToDrop.configFile | quote }}
               readOnly: true
+            - name: db-drop-conf
+              mountPath: {{ $dbToDrop.logConfigFile | quote }}
+              subPath: {{ base $dbToDrop.logConfigFile | quote }}
+              readOnly: true
 {{- end }}
 {{- end }}
       volumes:
@@ -115,8 +118,8 @@ spec:
         - name: etc-service
           emptyDir: {}
         - name: db-drop-conf
-          configMap:
-            name: {{ $configMapEtc | quote }}
+          secret:
+            secretName: {{ $configMapEtc | quote }}
             defaultMode: 0444
 {{- end -}}
 {{- end -}}

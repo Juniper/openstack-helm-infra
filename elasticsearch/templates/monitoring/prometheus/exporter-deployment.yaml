@@ -22,12 +22,17 @@ limitations under the License.
 {{- $serviceAccountName := "prometheus-elasticsearch-exporter" }}
 {{ tuple $envAll "prometheus_elasticsearch_exporter" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus-elasticsearch-exporter
+  labels:
+{{ tuple $envAll "elasticsearch" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.prometheus_elasticsearch_exporter }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "elasticsearch" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
@@ -36,13 +41,14 @@ spec:
     spec:
       serviceAccountName: {{ $serviceAccountName }}
       nodeSelector:
-        {{ .Values.labels.elasticsearch.node_selector_key }}: {{ .Values.labels.elasticsearch.node_selector_value }}
+        {{ .Values.labels.elasticsearch.node_selector_key }}: {{ .Values.labels.elasticsearch.node_selector_value | quote }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.prometheus_elasticsearch_exporter.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "prometheus_elasticsearch_exporter" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container"  | indent 8 }}
       containers:
         - name: elasticsearch-exporter
 {{ tuple $envAll "prometheus_elasticsearch_exporter" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll $envAll.Values.pod.resources.exporter | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - /tmp/elasticsearch-exporter.sh
             - start
@@ -52,7 +58,6 @@ spec:
                 command:
                   - /tmp/elasticsearch-exporter.sh
                   - stop
-{{ tuple $envAll $envAll.Values.pod.resources.exporter | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           env:
             - name: ELASTICSEARCH_URI
               valueFrom:
@@ -62,6 +67,11 @@ spec:
           ports:
             - name: metrics
               containerPort: {{ tuple "prometheus_elasticsearch_exporter" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ tuple "prometheus_elasticsearch_exporter" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
           volumeMounts:
             - name: elasticsearch-exporter-bin
               mountPath: /tmp/elasticsearch-exporter.sh

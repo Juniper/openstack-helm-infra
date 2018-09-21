@@ -22,13 +22,17 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: "{{.Release.Name}}-test"
+  labels:
+{{ tuple $envAll "fluent-logging" "test" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
   annotations:
     "helm.sh/hook": test-success
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
 spec:
   restartPolicy: Never
   containers:
     - name: {{.Release.Name}}-helm-tests
 {{ tuple $envAll "helm_tests" | include "helm-toolkit.snippets.image" | indent 6 }}
+{{ tuple $envAll $envAll.Values.pod.resources.jobs.tests | include "helm-toolkit.snippets.kubernetes_resources" | indent 6 }}
       command:
       - /tmp/helm-tests.sh
       env:

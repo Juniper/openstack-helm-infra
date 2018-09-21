@@ -22,20 +22,15 @@ limitations under the License.
 {{- end -}}
 ---
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: elasticsearch-etc
+type: Opaque
 data:
-  httpd.conf: |
-{{- tuple .Values.conf.apache.httpd "etc/_httpd.conf.tpl" . | include "helm-toolkit.utils.configmap_templater" }}
-  elasticsearch-host.conf: |
-{{- tuple .Values.conf.apache.host "etc/_elasticsearch-host.conf.tpl" . | include "helm-toolkit.utils.configmap_templater" }}
-  elasticsearch.yml: |
-{{ toYaml .Values.conf.elasticsearch.config | indent 4 }}
-  log4j2.properties: |
-{{- tuple .Values.conf.elasticsearch "etc/_log4j2.properties.tpl" . | include "helm-toolkit.utils.configmap_templater" }}
-  action_file.yml: |
-{{ toYaml .Values.conf.curator.action_file | indent 4 }}
-  config.yml: |
-{{ toYaml .Values.conf.curator.config | indent 4 }}
+  elasticsearch.yml: {{ toYaml .Values.conf.elasticsearch.config | b64enc }}
+  action_file.yml: {{ toYaml .Values.conf.curator.action_file | b64enc }}
+  config.yml: {{ toYaml .Values.conf.curator.config | b64enc }}
+#NOTE(portdirect): this must be last, to work round helm ~2.7 bug.
+{{- include "helm-toolkit.snippets.values_template_renderer" (dict "envAll" $envAll "template" .Values.conf.httpd "key" "httpd.conf" "format" "Secret") | indent 2 }}
+{{- include "helm-toolkit.snippets.values_template_renderer" (dict "envAll" $envAll "template" .Values.conf.log4j2 "key" "log4j2.properties" "format" "Secret") | indent 2 }}
 {{- end }}

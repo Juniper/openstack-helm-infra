@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+kubernetes_network_default_device: docker0
+gate_fqdn_test: true
 version:
   kubernetes: v1.9.3
   helm: v2.7.2

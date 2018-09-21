@@ -92,13 +92,20 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 kind: Deployment
-apiVersion: apps/v1beta1
+apiVersion: apps/v1
 metadata:
   name: nfs-provisioner
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "nfs" "provisioner" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.server }}
   strategy:
     type: Recreate
+  selector:
+    matchLabels:
+{{ tuple $envAll "nfs" "provisioner" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
   template:
     metadata:
       labels:
@@ -108,7 +115,7 @@ spec:
       affinity:
 {{ tuple $envAll "nfs" "provisioner" | include "helm-toolkit.snippets.kubernetes_pod_anti_affinity" | indent 8 }}
       nodeSelector:
-        {{ .Values.labels.nfs.node_selector_key }}: {{ .Values.labels.nfs.node_selector_value }}
+        {{ .Values.labels.nfs.node_selector_key }}: {{ .Values.labels.nfs.node_selector_value | quote }}
       initContainers:
 {{ tuple $envAll "nfs" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:

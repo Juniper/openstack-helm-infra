@@ -33,9 +33,11 @@ subjects:
   name: {{ $serviceAccountName }}
   namespace: {{ .Release.Namespace }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
   labels:
     app: helm
     name: tiller

@@ -33,12 +33,19 @@ roleRef:
   name: cluster-admin
   apiGroup: rbac.authorization.k8s.io
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: node-exporter
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
   namespace: {{ .Values.endpoints.node_metrics.namespace }}
+  labels:
+{{ tuple $envAll "node_exporter" "metrics" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
+  selector:
+    matchLabels:
+{{ tuple $envAll "node_exporter" "metrics" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll "node_exporter" | include "helm-toolkit.snippets.kubernetes_upgrades_daemonset" | indent 2 }}
   template:
     metadata:
@@ -47,8 +54,16 @@ spec:
       namespace: {{ .Values.endpoints.node_metrics.namespace }}
     spec:
       serviceAccountName: {{ $serviceAccountName }}
+{{ if .Values.labels.node_exporter.tolerations }}
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+      - key: node-role.kubernetes.io/node
+        operator: Exists
+{{ else }}
       nodeSelector:
-        {{ .Values.labels.node_exporter.node_selector_key }}: {{ .Values.labels.node_exporter.node_selector_value }}
+        {{ .Values.labels.node_exporter.node_selector_key }}: {{ .Values.labels.node_exporter.node_selector_value | quote }}
+{{ end }}
       hostNetwork: true
       hostPID: true
       initContainers:
@@ -56,18 +71,18 @@ spec:
       containers:
         - name: node-exporter
 {{ tuple $envAll "node_exporter" | include "helm-toolkit.snippets.image" | indent 10 }}
-          args:
-            - --collector.ntp
-            - --collector.ntp.server={{ .Values.conf.ntp_server_ip }}
-            - --collector.meminfo_numa
-            - --collector.bonding
-            - --collector.megacli
-            - --collector.mountstats
+{{ tuple $envAll $envAll.Values.pod.resources.node_exporter | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
+          command:
+            - /tmp/node-exporter.sh
           ports:
             - name: metrics
-              containerPort: {{ .Values.network.node_exporter.port }}
-              hostPort: {{ .Values.network.node_exporter.port }}
-{{ tuple $envAll $envAll.Values.pod.resources.node_exporter | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
+              containerPort: {{ tuple "node_metrics" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+              hostPort: {{ tuple "node_metrics" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            httpGet:
+              port: {{ tuple "node_metrics" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
           volumeMounts:
             - name: proc
               mountPath: /host/proc
@@ -75,6 +90,10 @@ spec:
             - name: sys
               mountPath: /host/sys
               readOnly:  true
+            - name: node-exporter-bin
+              mountPath: /tmp/node-exporter.sh
+              subPath: node-exporter.sh
+              readOnly: true
       volumes:
         - name: proc
           hostPath:
@@ -82,4 +101,8 @@ spec:
         - name: sys
           hostPath:
             path: /sys
+        - name: node-exporter-bin
+          configMap:
+            name: node-exporter-bin
+            defaultMode: 0555
 {{- end }}

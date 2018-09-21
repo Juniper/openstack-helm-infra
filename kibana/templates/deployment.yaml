@@ -16,31 +16,39 @@ limitations under the License.
 
 {{- if .Values.manifests.deployment }}
 {{- $envAll := . }}
+
 {{- $esUserSecret := .Values.secrets.elasticsearch.user }}
 
 {{- $serviceAccountName := "kibana" }}
 {{ tuple $envAll "kibana" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kibana
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "kibana" "dashboard" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.kibana }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "kibana" "dashboard" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
       labels:
 {{ tuple $envAll "kibana" "dashboard" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 8 }}
       annotations:
-        configmap-etc-hash: {{ tuple "configmap-etc.yaml" . | include "helm-toolkit.utils.hash" }}
         configmap-bin-hash: {{ tuple "configmap-bin.yaml" . | include "helm-toolkit.utils.hash" }}
+        configmap-etc-hash: {{ tuple "configmap-etc.yaml" . | include "helm-toolkit.utils.hash" }}
     spec:
       serviceAccountName: {{ $serviceAccountName }}
       affinity:
 {{ tuple $envAll "kibana" "dashboard" | include "helm-toolkit.snippets.kubernetes_pod_anti_affinity" | indent 8 }}
       nodeSelector:
-        {{ .Values.labels.kibana.node_selector_key }}: {{ .Values.labels.kibana.node_selector_value }}
+        {{ .Values.labels.kibana.node_selector_key }}: {{ .Values.labels.kibana.node_selector_value | quote }}
       initContainers:
 {{ tuple $envAll "kibana" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
@@ -53,19 +61,22 @@ spec:
           ports:
             - name: http
               containerPort: {{ tuple "kibana" "internal" "http" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ tuple "kibana" "internal" "http" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
           env:
-            - name: KIBANA_PORT
-              value: {{ tuple "kibana" "internal" "kibana" . | include "helm-toolkit.endpoints.endpoint_port_lookup" | quote }}
-            - name: KIBANA_USERNAME
+            - name: ELASTICSEARCH_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: kibana-admin-creds
-                  key: KIBANA_USERNAME
-            - name: KIBANA_PASSWORD
+                  name: {{ $esUserSecret }}
+                  key: ELASTICSEARCH_USERNAME
+            - name: ELASTICSEARCH_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: kibana-admin-creds
-                  key: KIBANA_PASSWORD
+                  name: {{ $esUserSecret }}
+                  key: ELASTICSEARCH_PASSWORD
           volumeMounts:
             - name: kibana-bin
               mountPath: /tmp/apache.sh
@@ -75,17 +86,9 @@ spec:
               mountPath: /usr/local/apache2/conf/httpd.conf
               subPath: httpd.conf
               readOnly: true
-            - name: pod-etc-apache
-              mountPath: /usr/local/apache2/conf/sites-enabled
-            - name: kibana-etc
-              mountPath: /usr/local/apache2/conf/sites-enabled/kibana-host.conf
-              subPath: kibana-host.conf
-              readOnly: true
         - name: kibana
 {{ tuple $envAll "kibana" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.kibana | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
-          securityContext:
-            runAsUser: 1000
           command:
             - /tmp/kibana.sh
             - start
@@ -126,7 +129,7 @@ spec:
             name: kibana-bin
             defaultMode: 0555
         - name: kibana-etc
-          configMap:
-            name: kibana-etc
+          secret:
+            secretName: kibana-etc
             defaultMode: 0444
 {{- end }}

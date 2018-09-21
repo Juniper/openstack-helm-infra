@@ -12,14 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# http://docs.projectcalico.org/v2.4/getting-started/kubernetes/installation/hosted/kubeadm/1.6/calico.yaml
-# Calico Version v2.4.1
-# https://docs.projectcalico.org/v2.4/releases#v2.4.1
-# This manifest includes the following component versions:
-#   calico/node:v2.4.1
-#   calico/cni:v1.10.0
-#   calico/kube-policy-controller:v0.7.0
-
 labels:
   job:
     node_selector_key: openstack-control-plane
@@ -27,13 +19,13 @@ labels:
 
 images:
   tags:
-    calico_etcd: quay.io/coreos/etcd:v3.1.10
-    calico_node: quay.io/calico/node:v2.6.5
-    calico_cni: quay.io/calico/cni:v1.11.2
-    calico_ctl: quay.io/calico/ctl:v1.6.2
-    calico_settings: quay.io/calico/ctl:v1.6.2
+    calico_etcd: quay.io/coreos/etcd:v3.1.14
+    calico_node: quay.io/calico/node:v2.6.9
+    calico_cni: quay.io/calico/cni:v1.11.5
+    calico_ctl: quay.io/calico/ctl:v1.6.4
+    calico_settings: quay.io/calico/ctl:v1.6.4
     calico_kube_policy_controller: quay.io/calico/kube-policy-controller:v0.7.0
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.1
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
@@ -65,40 +57,40 @@ pod:
           memory: "1024Mi"
           cpu: "2000m"
     calico_kube_policy_controller:
-        requests:
-          memory: "128Mi"
-          cpu: "100m"
-        limits:
-          memory: "1024Mi"
-          cpu: "2000m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
     calico_node:
-        requests:
-          memory: "128Mi"
-          cpu: "100m"
-        limits:
-          memory: "1024Mi"
-          cpu: "2000m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
     calico_cni:
-        requests:
-          memory: "128Mi"
-          cpu: "100m"
-        limits:
-          memory: "1024Mi"
-          cpu: "2000m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
     calico_ctl:
-        requests:
-          memory: "128Mi"
-          cpu: "100m"
-        limits:
-          memory: "1024Mi"
-          cpu: "2000m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
     calico_etcd:
-        requests:
-          memory: "128Mi"
-          cpu: "100m"
-        limits:
-          memory: "1024Mi"
-          cpu: "2000m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
   lifecycle:
     upgrades:
       deployments:
@@ -174,7 +166,7 @@ endpoints:
     scheme:
       default: http
     path:
-      default: ' ' # space required to provide a truly empty path
+      default: ' '  # space required to provide a truly empty path
     hosts:
       default: 10.96.232.136
     host_fqdn_override:
@@ -196,7 +188,7 @@ monitoring:
 
 networking:
   podSubnet: 192.168.0.0/16
-  #NOTE(portdirect): this should be the physical MTU, the appropriate MTU
+  # NOTE(portdirect): this should be the physical MTU, the appropriate MTU
   # that calico should use will be calculated.
   mtu: 1500
   settings:

@@ -32,7 +32,8 @@ function ansible_install {
       libssl-dev \
       python-dev \
       build-essential \
-      jq
+      jq \
+      curl
   elif [ "x$ID" == "xcentos" ]; then
     sudo yum install -y \
       epel-release
@@ -47,6 +48,7 @@ function ansible_install {
   elif [ "x$ID" == "xfedora" ]; then
     sudo dnf install -y \
       python-devel \
+      libselinux-python \
       redhat-rpm-config \
       gcc \
       jq
@@ -54,6 +56,9 @@ function ansible_install {
 
   sudo -H -E pip install --no-cache-dir --upgrade pip
   sudo -H -E pip install --no-cache-dir --upgrade setuptools
+  # NOTE(lamt) Preinstalling a capped version of cmd2 to address bug:
+  # https://github.com/python-cmd2/cmd2/issues/421
+  sudo -H -E pip install --no-cache-dir --upgrade "cmd2<=0.8.7"
   sudo -H -E pip install --no-cache-dir --upgrade pyopenssl
   # NOTE(srwilkers): Pinning ansible to 2.5.5, as pip installs 2.6 by default.
   # 2.6 introduces a new command flag (init) for the docker_container module
@@ -76,7 +81,7 @@ elif [ "x${DEPLOY}" == "xlogs" ]; then
   PLAYBOOKS="osh-infra-collect-logs"
 elif [ "x${DEPLOY}" == "xfull" ]; then
   ansible_install
-  PLAYBOOKS="osh-infra-docker osh-infra-build osh-infra-deploy-k8s osh-infra-deploy-charts osh-infra-collect-logs osh-k8s-create-image-secret"
+  PLAYBOOKS="osh-infra-deploy-docker osh-infra-build osh-infra-deploy-k8s osh-infra-deploy-charts osh-infra-collect-logs"
 else
   echo "Unknown Deploy Option Selected"
   exit 1

@@ -21,12 +21,19 @@ limitations under the License.
 {{- $serviceAccountName := "prometheus-openstack-exporter" }}
 {{ tuple $envAll "prometheus_openstack_exporter" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus-openstack-exporter
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "prometheus-openstack-exporter" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.prometheus_openstack_exporter }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "prometheus-openstack-exporter" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
@@ -35,7 +42,7 @@ spec:
     spec:
       serviceAccountName: {{ $serviceAccountName }}
       nodeSelector:
-        {{ .Values.labels.openstack_exporter.node_selector_key }}: {{ .Values.labels.openstack_exporter.node_selector_value }}
+        {{ .Values.labels.openstack_exporter.node_selector_key }}: {{ .Values.labels.openstack_exporter.node_selector_value | quote }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.prometheus_openstack_exporter.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "prometheus_openstack_exporter" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
@@ -55,6 +62,12 @@ spec:
           ports:
             - name: metrics
               containerPort: {{ tuple "prometheus_openstack_exporter" "internal" "exporter" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: {{ tuple "prometheus_openstack_exporter" "internal" "exporter" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
           env:
             - name: LISTEN_PORT
               value: {{ tuple "prometheus_openstack_exporter" "internal" "exporter" . | include "helm-toolkit.endpoints.endpoint_port_lookup" | quote }}

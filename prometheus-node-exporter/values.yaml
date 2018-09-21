@@ -19,7 +19,7 @@
 images:
   tags:
     node_exporter: docker.io/prom/node-exporter:v0.15.0
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.1
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: IfNotPresent
   local_registry:
@@ -29,9 +29,11 @@ images:
       - image_repo_sync
 
 labels:
+  #(NOTE:seungkyua): when tolerations is true, nodeSelector will be disabled.
   node_exporter:
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
+    tolerations: false
   job:
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
@@ -103,10 +105,6 @@ monitoring:
     node_exporter:
       scrape: true
 
-network:
-  node_exporter:
-    port: 9100
-
 endpoints:
   cluster_domain_suffix: cluster.local
   local_image_registry:
@@ -133,8 +131,6 @@ endpoints:
       default: 'http'
     port:
       metrics:
-        default: 9100
-      prometheus_port:
         default: 9100
 
 manifests:

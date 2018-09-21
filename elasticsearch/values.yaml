@@ -21,10 +21,10 @@ images:
     apache_proxy: docker.io/httpd:2.4
     memory_init: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     curator:  docker.io/bobrik/curator:5.2.0
-    elasticsearch: docker.elastic.co/elasticsearch/elasticsearch:6.2.2
+    elasticsearch: docker.io/elasticsearch:5.6.4
     helm_tests: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     prometheus_elasticsearch_exporter: docker.io/justwatch/elasticsearch_exporter:1.0.1
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.1
     snapshot_repository: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     image_repo_sync: docker.io/docker:17.07.0
   pull_policy: "IfNotPresent"
@@ -106,6 +106,13 @@ pod:
       elasticsearch:
   resources:
     enabled: false
+    apache_proxy:
+      limits:
+        memory: "1024Mi"
+        cpu: "2000m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
     client:
       requests:
         memory: "128Mi"
@@ -167,16 +174,132 @@ pod:
 secrets:
   elasticsearch:
     user: elasticsearch-admin-creds
+  tls:
+    elasticsearch:
+      elasticsearch:
+        public: elasticsearch-tls-public
 
 conf:
-  apache:
-    htpasswd: /usr/local/apache2/conf/.htpasswd
-  httpd:
+  httpd: |
+    ServerRoot "/usr/local/apache2"
+
+    Listen 80
+
+    LoadModule mpm_event_module modules/mod_mpm_event.so
+    LoadModule authn_file_module modules/mod_authn_file.so
+    LoadModule authn_core_module modules/mod_authn_core.so
+    LoadModule authz_host_module modules/mod_authz_host.so
+    LoadModule authz_groupfile_module modules/mod_authz_groupfile.so
+    LoadModule authz_user_module modules/mod_authz_user.so
+    LoadModule authz_core_module modules/mod_authz_core.so
+    LoadModule access_compat_module modules/mod_access_compat.so
+    LoadModule auth_basic_module modules/mod_auth_basic.so
+    LoadModule ldap_module modules/mod_ldap.so
+    LoadModule authnz_ldap_module modules/mod_authnz_ldap.so
+    LoadModule reqtimeout_module modules/mod_reqtimeout.so
+    LoadModule filter_module modules/mod_filter.so
+    LoadModule proxy_html_module modules/mod_proxy_html.so
+    LoadModule log_config_module modules/mod_log_config.so
+    LoadModule env_module modules/mod_env.so
+    LoadModule headers_module modules/mod_headers.so
+    LoadModule setenvif_module modules/mod_setenvif.so
+    LoadModule version_module modules/mod_version.so
+    LoadModule proxy_module modules/mod_proxy.so
+    LoadModule proxy_connect_module modules/mod_proxy_connect.so
+    LoadModule proxy_http_module modules/mod_proxy_http.so
+    LoadModule proxy_balancer_module modules/mod_proxy_balancer.so
+    LoadModule slotmem_shm_module modules/mod_slotmem_shm.so
+    LoadModule slotmem_plain_module modules/mod_slotmem_plain.so
+    LoadModule unixd_module modules/mod_unixd.so
+    LoadModule status_module modules/mod_status.so
+    LoadModule autoindex_module modules/mod_autoindex.so
+
+    <IfModule unixd_module>
+    User daemon
+    Group daemon
+    </IfModule>
+
+    <Directory />
+        AllowOverride none
+        Require all denied
+    </Directory>
+
+    <Files ".ht*">
+        Require all denied
+    </Files>
+
+    ErrorLog /dev/stderr
+
+    LogLevel warn
+
+    <IfModule log_config_module>
+        LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+        LogFormat "%h %l %u %t \"%r\" %>s %b" common
+
+        <IfModule logio_module>
+          LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\" %I %O" combinedio
+        </IfModule>
+
+        CustomLog /dev/stdout common
+
+        CustomLog /dev/stdout combined
+    </IfModule>
+
+    <Directory "/usr/local/apache2/cgi-bin">
+        AllowOverride None
+        Options None
+        Require all granted
+    </Directory>
+
+    <IfModule headers_module>
+        RequestHeader unset Proxy early
+    </IfModule>
+
+    <IfModule proxy_html_module>
+    Include conf/extra/proxy-html.conf
+    </IfModule>
+
+    <VirtualHost *:80>
+      <Location />
+          ProxyPass http://localhost:{{ tuple "elasticsearch" "internal" "client" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/
+          ProxyPassReverse http://localhost:{{ tuple "elasticsearch" "internal" "client" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}/
+      </Location>
+      <Proxy *>
+          AuthName "Elasticsearch"
+          AuthType Basic
+          AuthBasicProvider file ldap
+          AuthUserFile /usr/local/apache2/conf/.htpasswd
+          AuthLDAPBindDN {{ .Values.endpoints.ldap.auth.admin.bind }}
+          AuthLDAPBindPassword {{ .Values.endpoints.ldap.auth.admin.password }}
+          AuthLDAPURL {{ tuple "ldap" "default" "ldap" . | include "helm-toolkit.endpoints.keystone_endpoint_uri_lookup" | quote }}
+          Require valid-user
+      </Proxy>
+    </VirtualHost>
+  log4j2: |
+    appender.console.type=Console
+    appender.console.name=console
+    appender.console.layout.type=PatternLayout
+    appender.console.layout.pattern="[%d{ISO8601}][%-5p][%-25c{1.}] %marker%m%n"
+    appender.rolling.type=RollingFile
+    appender.rolling.name=rolling
+    appender.rolling.fileName="${sys:es.logs.base_path}${sys:file.separator}${hostName}.log"
+    appender.rolling.filePattern="${sys:es.logs.base_path}${sys:file.separator}${hostName}.log.%i"
+    appender.rolling.layout.type=PatternLayout
+    appender.rolling.layout.pattern="[%d{DEFAULT}][%-5p][%-25c] %.10000m%n"
+    appender.rolling.policies.type=Policies
+    appender.rolling.policies.size.type=SizeBasedTriggeringPolicy
+    appender.rolling.policies.size.size=100MB
+    appender.rolling.strategy.type=DefaultRolloverStrategy
+    appender.rolling.strategy.max=5
+    appender.rolling.strategy.fileIndex=min
+    rootLogger.level=info
+    rootLogger.appenderRef.console.ref=console
+    rootLogger.appenderRef.rolling.ref=rolling
   init:
     max_map_count: 262144
   curator:
-    #runs weekly
-    schedule:  "0 0 * * 0"
+    #run every 6th hour
+    schedule:  "0 */6 * * *"
     action_file:
       # Remember, leave a key empty if there is no value.  None will be a string,
       # not a Python "NoneType"
@@ -187,26 +310,48 @@ conf:
       actions:
         1:
           action: delete_indices
-          description: "Clean up ES by deleting old indices"
+          description: >-
+            "Delete indices older than 7 days"
           options:
             timeout_override:
             continue_if_exception: False
             ignore_empty_list: True
             disable_action: True
           filters:
+          - filtertype: pattern
+            kind: prefix
+            value: logstash-
           - filtertype: age
             source: name
             direction: older
             timestring: '%Y.%m.%d'
             unit: days
-            unit_count: 30
-            field:
-            stats_result:
-            epoch:
-            exclude: False
+            unit_count: 7
         2:
+          action: delete_indices
+          description: >-
+            "Delete indices by age if available disk space is
+             less than 80% total disk"
+          options:
+            timeout_override: 600
+            continue_if_exception: False
+            ignore_empty_list: True
+            disable_action: True
+          filters:
+          - filtertype: pattern
+            kind: prefix
+            value: logstash-
+          - filtertype: space
+            source: creation_date
+            use_age: True
+            # This space assumes the default PVC size of 5Gi times three data
+            # replicas. This must be adjusted if changed due to Curator being
+            # unable to calculate percentages of total disk space
+            disk_space: 12
+        3:
           action: snapshot
-          description: "Snapshot indices and send to configured repository"
+          description: >-
+            "Snapshot indices older than one day"
           options:
             repository: default_repo
             # Leaving this blank results in the default name format
@@ -214,7 +359,7 @@ conf:
             wait_for_completion: True
             max_wait: 3600
             wait_interval: 10
-            timeout_override:
+            timeout_override: 600
             ignore_empty_list: True
             continue_if_exception: False
             disable_action: True
@@ -224,37 +369,41 @@ conf:
             direction: older
             timestring: '%Y.%m.%d'
             unit: days
+            unit_count: 1
+        4:
+          action: delete_snapshots
+          description: >-
+            "Delete snapshots older than 30 days"
+          options:
+            repository: default_repo
+            disable_action: True
+            timeout_override: 600
+            ignore_empty_list: True
+          filters:
+          - filtertype: pattern
+            kind: prefix
+            value: curator-
+            exclude:
+          - filtertype: age
+            source: creation_date
+            direction: older
+            unit: days
             unit_count: 30
-            field:
-            stats_result:
-            epoch:
-            exclude: False
     config:
       # Remember, leave a key empty if there is no value.  None will be a string,
       # not a Python "NoneType"
       client:
         hosts:
-          - elasticsearch-logging
-        port: 9200
-        url_prefix:
+          - ${ELASTICSEARCH_HOST}
         use_ssl: False
-        certificate:
-        client_cert:
-        client_key:
         ssl_no_validate: False
-        http_auth:
-        timeout: 30
-        master_only: False
+        timeout: 60
       logging:
         loglevel: INFO
-        logfile:
-        logformat: default
+        logformat: logstash
         blacklist: ['elasticsearch', 'urllib3']
   elasticsearch:
     config:
-      xpack:
-        security:
-          enabled: false
       bootstrap:
         memory_lock: true
       cluster:
@@ -283,10 +432,6 @@ conf:
       type: fs
     env:
       java_opts: "-Xms256m -Xmx256m"
-  log4j2:
-    override:
-    prefix:
-    append:
   prometheus_elasticsearch_exporter:
     es:
       all: true
@@ -294,6 +439,18 @@ conf:
 
 endpoints:
   cluster_domain_suffix: cluster.local
+  local_image_registry:
+    name: docker-registry
+    namespace: docker-registry
+    hosts:
+      default: localhost
+      internal: docker-registry
+      node: localhost
+    host_fqdn_override:
+      default: null
+    port:
+      registry:
+        node: 5000
   elasticsearch:
     name: elasticsearch
     namespace: null
@@ -308,6 +465,13 @@ endpoints:
       public: elasticsearch
     host_fqdn_override:
       default: null
+      # NOTE(srwilkers): this chart supports TLS for fqdn over-ridden public
+      # endpoints using the following format:
+      # public:
+      #   host: null
+      #   tls:
+      #     crt: null
+      #     key: null
     path:
       default: null
     scheme:
@@ -332,6 +496,22 @@ endpoints:
     port:
       metrics:
         default: 9108
+  ldap:
+    hosts:
+      default: ldap
+    auth:
+      admin:
+        bind: "cn=admin,dc=cluster,dc=local"
+        password: password
+    host_fqdn_override:
+      default: null
+    path:
+      default: "/ou=People,dc=cluster,dc=local"
+    scheme:
+      default: ldap
+    port:
+      ldap:
+        default: 389
 
 monitoring:
   prometheus:
@@ -340,18 +520,17 @@ monitoring:
       scrape: true
 
 network:
-  client:
+  elasticsearch:
+    ingress:
+      public: true
+      classes:
+        namespace: "nginx"
+        cluster: "nginx-cluster"
+      annotations:
+        nginx.ingress.kubernetes.io/rewrite-target: /
     node_port:
       enabled: false
       port: 30920
-  discovery:
-    node_port:
-      enabled: false
-      port: 30930
-  data:
-    node_port:
-      enabled: false
-      port: 30931
 
 storage:
   elasticsearch:
@@ -378,11 +557,12 @@ manifests:
   cron_curator: true
   deployment_client: true
   deployment_master: true
+  ingress: true
   job_image_repo_sync: true
   job_snapshot_repository: false
   helm_tests: true
   pvc_snapshots: false
-  secret_admin: true
+  secret_elasticsearch: true
   monitoring:
     prometheus:
       configmap_bin_exporter: true
@@ -391,5 +571,6 @@ manifests:
   pvc_snapshots: true
   service_data: true
   service_discovery: true
+  service_ingress: true
   service_logging: true
   statefulset_data: true

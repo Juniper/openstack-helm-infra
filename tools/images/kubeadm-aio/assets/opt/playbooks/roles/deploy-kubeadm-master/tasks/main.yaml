@@ -41,10 +41,20 @@
 - name: generating certs
   delegate_to: 127.0.0.1
   block:
+    - name: master | deploy | certs | etcd-ca
+      command: kubeadm alpha phase certs etcd-ca --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
+    - name: master | deploy | certs | etcd-server
+      command: kubeadm alpha phase certs etcd-server --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
+    - name: master | deploy | certs | etcd-peer
+      command: kubeadm alpha phase certs etcd-peer --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
+    - name: master | deploy | certs | etcd-healthcheck-client
+      command: kubeadm alpha phase certs etcd-healthcheck-client --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
     - name: master | deploy | certs | ca
       command: kubeadm alpha phase certs ca --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
     - name: master | deploy | certs | apiserver
       command: kubeadm alpha phase certs apiserver --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
+    - name: master | deploy | certs | apiserver-etcd-client
+      command: kubeadm alpha phase certs apiserver-etcd-client --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
     - name: master | deploy | certs | apiserver-kubelet-client
       command: kubeadm alpha phase certs apiserver-kubelet-client --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
     - name: master | deploy | certs | sa
@@ -126,14 +136,9 @@
         executable: /bin/bash
     - include_tasks: wait-for-kube-system-namespace.yaml
 
-# - name: deploying kube-dns addon
-#   delegate_to: 127.0.0.1
-#   block:
-#     - name: master | deploy | kube-dns
-#       command: kubeadm alpha phase addon kube-dns --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
-#     - include_tasks: wait-for-kube-system-namespace.yaml
-
 - include_tasks: helm-dns.yaml
+- include_tasks: helm-keystone-auth.yaml
+  when: k8s.keystoneAuth|bool == true
 - include_tasks: helm-deploy.yaml
 
 - name: uploading cluster config to api
@@ -156,7 +161,7 @@
       register: kube_public_ns_exists
       ignore_errors: True
     - name: create kube-public namespace if required
-      when: kube_public_ns_exists | failed
+      when: kube_public_ns_exists is failed
       command: kubectl --kubeconfig /mnt/rootfs/etc/kubernetes/admin.conf create ns kube-public
     - name: sourcing kube cluster admin credentials
       include_vars: /etc/kubernetes/admin.conf
@@ -181,7 +186,7 @@
       register: kube_public_configmap_role_exists
       ignore_errors: True
     - name: create kube-public configmap role if required
-      when: kube_public_configmap_role_exists | failed
+      when: kube_public_configmap_role_exists is failed
       command: kubectl --kubeconfig /mnt/rootfs/etc/kubernetes/admin.conf -n kube-public create role system:bootstrap-signer-clusterinfo --verb get --resource configmaps
 
     - name: check if kube-public configmap rolebinding exists
@@ -189,7 +194,7 @@
       register: kube_public_configmap_rolebinding_exists
       ignore_errors: True
     - name: create kube-public configmap rolebinding if required
-      when: kube_public_configmap_rolebinding_exists | failed
+      when: kube_public_configmap_rolebinding_exists is failed
       command: kubectl --kubeconfig /mnt/rootfs/etc/kubernetes/admin.conf -n kube-public create rolebinding kubeadm:bootstrap-signer-clusterinfo --role system:bootstrap-signer-clusterinfo --user system:anonymous
 
 - name: adding labels to namespace to support network policy
@@ -205,15 +210,18 @@
   delegate_to: 127.0.0.1
   command: kubeadm alpha phase selfhosting convert-from-staticpods --kubeconfig /mnt/rootfs/etc/kubernetes/admin.conf --config /mnt/rootfs/etc/kubernetes/kubeadm-conf.yaml
 
-- name: setting up kubectl client on host
+- name: setting up kubectl client and kubeadm on host
   block:
     - name: kubectl | copying kubectl binary to host
       copy:
-        src: /usr/bin/kubectl
-        dest: /usr/bin/kubectl
+        src: "/usr/bin/{{ item }}"
+        dest: "/usr/bin/{{ item }}"
         owner: root
         group: root
         mode: 0555
+      with_items:
+        - kubectl
+        - kubeadm
     - name: kubectl | master | ensure kube config directory exists for user
       file:
         path: "{{ item }}"

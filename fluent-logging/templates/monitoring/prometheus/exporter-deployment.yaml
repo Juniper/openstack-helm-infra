@@ -24,12 +24,17 @@ limitations under the License.
 {{- $serviceAccountName := "prometheus-fluentd-exporter"}}
 {{ tuple $envAll "prometheus_fluentd_exporter" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: prometheus-fluentd-exporter
+  labels:
+{{ tuple $envAll "prometheus_fluentd_exporter" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.prometheus_fluentd_exporter }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "prometheus_fluentd_exporter" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
@@ -38,14 +43,13 @@ spec:
     spec:
       serviceAccountName: {{ $serviceAccountName }}
       nodeSelector:
-        {{ .Values.labels.prometheus_fluentd_exporter.node_selector_key }}: {{ .Values.labels.prometheus_fluentd_exporter.node_selector_value }}
+        {{ .Values.labels.prometheus_fluentd_exporter.node_selector_key }}: {{ .Values.labels.prometheus_fluentd_exporter.node_selector_value | quote }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.prometheus_fluentd_exporter.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "prometheus_fluentd_exporter" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container"  | indent 8 }}
       containers:
         - name: fluentd-exporter
-          image: {{ .Values.images.tags.prometheus_fluentd_exporter }}
-          imagePullPolicy: {{ .Values.images.pull_policy }}
+{{ tuple $envAll "prometheus_fluentd_exporter" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.prometheus_fluentd_exporter | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - /tmp/fluentd-exporter.sh
@@ -53,6 +57,11 @@ spec:
           ports:
             - name: metrics
               containerPort: {{ tuple "prometheus_fluentd_exporter" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ tuple "prometheus_fluentd_exporter" "internal" "metrics" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
           env:
             - name: FLUENTD_METRICS_HOST
               value: {{ $fluentd_metrics_host }}

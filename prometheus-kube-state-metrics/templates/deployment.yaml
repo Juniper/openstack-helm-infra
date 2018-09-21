@@ -28,14 +28,18 @@ rules:
   - apiGroups:
       - ""
     resources:
-      - namespaces
+      - configmaps
+      - secrets
       - nodes
-      - persistentvolumeclaims
       - pods
       - services
       - resourcequotas
       - replicationcontrollers
       - limitranges
+      - persistentvolumeclaims
+      - persistentvolumes
+      - namespaces
+      - endpoints
     verbs:
       - list
       - watch
@@ -64,6 +68,13 @@ rules:
     verbs:
       - list
       - watch
+  - apiGroups:
+      - autoscaling
+    resources:
+      - horizontalpodautoscalers
+    verbs:
+      - list
+      - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1beta1
 kind: ClusterRoleBinding
@@ -78,12 +89,19 @@ roleRef:
   name: {{ $serviceAccountName }}
   apiGroup: rbac.authorization.k8s.io
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kube-state-metrics
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "kube-state-metrics" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.kube_state_metrics }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "kube-state-metrics" "exporter" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
@@ -92,7 +110,7 @@ spec:
     spec:
       serviceAccountName: {{ $serviceAccountName }}
       nodeSelector:
-        {{ .Values.labels.kube_state_metrics.node_selector_key }}: {{ .Values.labels.kube_state_metrics.node_selector_value }}
+        {{ .Values.labels.kube_state_metrics.node_selector_key }}: {{ .Values.labels.kube_state_metrics.node_selector_value | quote }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.kube_state_metrics.timeout | default "30" }}
       initContainers:
 {{ tuple $envAll "kube_state_metrics" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
@@ -100,7 +118,25 @@ spec:
         - name: kube-state-metrics
 {{ tuple $envAll "kube_state_metrics" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.kube_state_metrics | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
+          command:
+            - /tmp/kube-state-metrics.sh
           ports:
             - name: metrics
               containerPort: {{ tuple "kube_state_metrics" "internal" "http" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: {{ tuple "kube_state_metrics" "internal" "http" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          volumeMounts:
+            - name: kube-state-metrics-bin
+              mountPath: /tmp/kube-state-metrics.sh
+              subPath: kube-state-metrics.sh
+              readOnly: true
+      volumes:
+        - name: kube-state-metrics-bin
+          configMap:
+            name: kube-state-metrics-bin
+            defaultMode: 0555
 {{- end }}

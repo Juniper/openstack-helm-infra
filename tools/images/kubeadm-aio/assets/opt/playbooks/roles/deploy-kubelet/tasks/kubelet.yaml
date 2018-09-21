@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-- name: ubuntu | installing kubelet support packages
+- name: ubuntu or debian | installing kubelet support packages
   when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
   apt:
     name: "{{item}}"
@@ -23,8 +23,23 @@
     - libmnl0
     - libnfnetlink0
     - libwrap0
-    - libxtables11
     - socat
+
+- name: ubuntu xenial | installing kubelet support packages
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'xenial'
+  apt:
+    name: "{{item}}"
+    state: installed
+  with_items:
+    - libxtables11
+
+- name: debian and ubuntu bionic | installing kubelet support packages
+  when: ansible_distribution == 'Debian' or ( ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'bionic' )
+  apt:
+    name: "{{item}}"
+    state: installed
+  with_items:
+    - libxtables12
 
 - name: centos | installing kubelet support packages
   when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
@@ -146,6 +161,41 @@
         state: restarted
         enabled: yes
         masked: no
+
+- name: Setup DNS redirector for fqdn testing
+  # NOTE(portdirect): This must be done before the K8S DNS pods attempt to
+  # start, so they use the dnsmasq instance to resolve upstream hostnames
+  when: gate.fqdn_testing|bool == true
+  block:
+    - name: Setup DNS redirector | Remove std kubelet resolv.conf
+      file:
+        path: "/etc/kubernetes/kubelet-resolv.conf"
+        state: absent
+    - name: Setup DNS redirector | Populating new kubelet resolv.conf
+      copy:
+        dest: "/etc/kubernetes/kubelet-resolv.conf"
+        mode: 0640
+        content: |
+          nameserver 172.17.0.1
+    - name: Setup DNS redirector | Ensuring static manifests dir exists
+      file:
+        path: "/etc/kubernetes/manifests/"
+        state: directory
+    - name: Setup DNS redirector | check if an resolv-upstream.conf exists
+      stat:
+        path: /etc/resolv-upstream.conf
+      register: resolv_upstream_conf
+    - name: Setup DNS redirector | Placing pod manifest on host
+      when: resolv_upstream_conf.stat.exists == False
+      template:
+        src: resolv-upstream.conf.j2
+        dest: /etc/resolv-upstream.conf
+        mode: 0664
+    - name: Setup DNS redirector | Placing pod manifest on host
+      template:
+        src: osh-dns-redirector.yaml.j2
+        dest: /etc/kubernetes/manifests/osh-dns-redirector.yaml
+        mode: 0640
 
 - name: docker | ensure service is started and enabled
   when: kubelet.container_runtime == 'docker'

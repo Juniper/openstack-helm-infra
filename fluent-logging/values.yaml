@@ -23,8 +23,10 @@ labels:
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
   fluentbit:
+    #(NOTE:seungkyua): when tolerations is true, nodeSelector will be disabled.
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
+    tolerations: false
   prometheus_fluentd_exporter:
     node_selector_key: openstack-control-plane
     node_selector_value: enabled
@@ -34,10 +36,10 @@ labels:
 
 images:
   tags:
-    fluentbit: docker.io/fluent/fluent-bit:0.12.14
-    fluentd: docker.io/kolla/ubuntu-source-fluentd:ocata
+    fluentbit: docker.io/fluent/fluent-bit:0.14.2
+    fluentd: docker.io/fluent/fluentd-kubernetes-daemonset:v1.2-debian-elasticsearch
     prometheus_fluentd_exporter: docker.io/srwilkers/fluentd_exporter:v0.1
-    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.0
+    dep_check: quay.io/stackanetes/kubernetes-entrypoint:v0.3.1
     helm_tests: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     elasticsearch_template: docker.io/kolla/ubuntu-source-heat-engine:3.0.3
     image_repo_sync: docker.io/docker:17.07.0
@@ -103,7 +105,7 @@ conf:
   fluentbit:
     - service:
         header: service
-        Flush: 5
+        Flush: 30
         Daemon: Off
         Log_Level: info
         Parsers_File: parsers.conf
@@ -115,6 +117,13 @@ conf:
         Parser: docker
         DB: /var/log/flb_kube.db
         Mem_Buf_Limit: 5MB
+        DB.Sync: Normal
+        Buffer_Chunk_Size: 1M
+        Buffer_Max_Size: 1M
+    - drop_fluentd_logs:
+        header: output
+        Name: "null"
+        Match: "**.fluentd**"
     - kube_filter:
         header: filter
         Name: kubernetes
@@ -145,6 +154,10 @@ conf:
         type: forward
         port: "#{ENV['FLUENTD_PORT']}"
         bind: 0.0.0.0
+    - filter_fluentd_logs:
+        header: match
+        expression: "fluent.**"
+        type: "null"
     - elasticsearch:
         header: match
         type: elasticsearch
@@ -161,58 +174,71 @@ conf:
         max_retry_wait: 300
         disable_retry_limit: ""
         num_threads: 8
-        type_name: fluentd
+        type_name: fluent
   fluentd_exporter:
     log:
       format: "logger:stdout?json=true"
       level: "info"
-  template:
-    template: "logstash-*"
-    index_patterns: "logstash-*"
-    settings:
-      number_of_shards: 1
-    mappings:
-      doc:
-        properties:
-          kubernetes:
-            properties:
-              container_name:
-                type: keyword
-                index: false
-              docker_id:
-                type: keyword
-                index: false
-              host:
-                type: keyword
-                index: false
-              labels:
-                properties:
-                  app:
-                    type: keyword
-                    index: false
-                  application:
-                    type: keyword
-                    index: false
-                  component:
-                    type: keyword
-                    index: false
-                  release_group:
-                    type: keyword
-                    index: false
-              namespace_name:
-                type: keyword
-                index: false
-              pod_id:
-                type: keyword
-                index: false
-              pod_name:
-               type: keyword
-               index: false
-          log:
-            type: text
+  templates:
+    fluent:
+      template: "logstash-*"
+      index_patterns: "logstash-*"
+      settings:
+        number_of_shards: 1
+      mappings:
+        fluent:
+          properties:
+            kubernetes:
+              properties:
+                container_name:
+                  type: keyword
+                  index: false
+                docker_id:
+                  type: keyword
+                  index: false
+                host:
+                  type: keyword
+                  index: false
+                labels:
+                  properties:
+                    app:
+                      type: keyword
+                      index: false
+                    application:
+                      type: keyword
+                      index: false
+                    component:
+                      type: keyword
+                      index: false
+                    release_group:
+                      type: keyword
+                      index: false
+                namespace_name:
+                  type: keyword
+                  index: false
+                pod_id:
+                  type: keyword
+                  index: false
+                pod_name:
+                  type: keyword
+                  index: false
+            log:
+              type: text
 
 endpoints:
   cluster_domain_suffix: cluster.local
+  local_image_registry:
+    name: docker-registry
+    namespace: docker-registry
+    hosts:
+      default: localhost
+      internal: docker-registry
+      node: localhost
+    host_fqdn_override:
+      default: null
+    port:
+      registry:
+        node: 5000
   elasticsearch:
     namespace: null
     name: elasticsearch
@@ -293,11 +319,11 @@ network:
 
 pod:
   affinity:
-      anti:
-        type:
-          default: preferredDuringSchedulingIgnoredDuringExecution
-        topologyKey:
-          default: kubernetes.io/hostname
+    anti:
+      type:
+        default: preferredDuringSchedulingIgnoredDuringExecution
+      topologyKey:
+        default: kubernetes.io/hostname
   lifecycle:
     upgrades:
       daemonsets:
@@ -321,8 +347,8 @@ pod:
     fluentd: 3
     prometheus_fluentd_exporter: 1
   resources:
+    enabled: false
     fluentbit:
-      enabled: false
       limits:
         memory: '400Mi'
         cpu: '400m'
@@ -330,7 +356,6 @@ pod:
         memory: '100Mi'
         cpu: '100m'
     fluentd:
-      enabled: false
       limits:
         memory: '1024Mi'
         cpu: '2000m'

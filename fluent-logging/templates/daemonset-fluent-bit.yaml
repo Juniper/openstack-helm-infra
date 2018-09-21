@@ -72,11 +72,18 @@ rules:
       - list
       - watch
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: DaemonSet
 metadata:
   name: fluentbit
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "fluentbit" "daemon" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
+  selector:
+    matchLabels:
+{{ tuple $envAll "fluentbit" "daemon" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll "fluentbit" | include "helm-toolkit.snippets.kubernetes_upgrades_daemonset" | indent 2 }}
   template:
     metadata:
@@ -86,8 +93,16 @@ spec:
         configmap-etc-hash: {{ tuple "configmap-etc.yaml" . | include "helm-toolkit.utils.hash" }}
     spec:
       serviceAccountName: {{ $serviceAccountName }}
+{{ if .Values.labels.fluentbit.tolerations }}
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+      - key: node-role.kubernetes.io/node
+        operator: Exists
+{{ else }}
       nodeSelector:
-        {{ .Values.labels.fluentbit.node_selector_key }}: {{ .Values.labels.fluentbit.node_selector_value }}
+        {{ .Values.labels.fluentbit.node_selector_key }}: {{ .Values.labels.fluentbit.node_selector_value | quote }}
+{{ end }}
       hostNetwork: true
       hostPID: true
       dnsPolicy: ClusterFirstWithHostNet
@@ -95,8 +110,7 @@ spec:
 {{ tuple $envAll "fluentbit" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: fluentbit
-          image: {{ .Values.images.tags.fluentbit }}
-          imagePullPolicy: {{ .Values.images.pull_policy }}
+{{ tuple $envAll "fluentbit" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.fluentbit | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - /tmp/fluent-bit.sh
@@ -123,7 +137,7 @@ spec:
               mountPath: /fluent-bit/etc/parsers.conf
               subPath: parsers.conf
               readOnly: true
-{{ if $mounts_fluentbit.volumeMounts }}{{ toYaml $mounts_fluentbit.volumeMounts | indent 8 }}{{ end }}
+{{ if $mounts_fluentbit.volumeMounts }}{{ toYaml $mounts_fluentbit.volumeMounts | indent 12 }}{{ end }}
       volumes:
         - name: varlog
           hostPath:
@@ -136,8 +150,8 @@ spec:
             name: fluent-logging-bin
             defaultMode: 0555
         - name: fluent-logging-etc
-          configMap:
-            name: fluent-logging-etc
+          secret:
+            secretName: fluent-logging-etc
             defaultMode: 0444
 {{ if $mounts_fluentbit.volumes }}{{ toYaml $mounts_fluentbit.volumes | indent 8 }}{{ end }}
 {{- end }}

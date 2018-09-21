@@ -22,6 +22,8 @@ kind: ConfigMap
 metadata:
   name: node-exporter-bin
 data:
+  node-exporter.sh: |
+{{ tuple "bin/_node-exporter.sh.tpl" . | include "helm-toolkit.utils.template" | indent 4 }}
   image-repo-sync.sh: |
 {{- include "helm-toolkit.scripts.image_repo_sync" . | indent 4 }}
 {{- end }}

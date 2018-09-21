@@ -22,9 +22,17 @@ limitations under the License.
 {{- $_ := set $envAll.Values "__kubernetes_entrypoint_init_container" dict -}}
 {{- $_ := set $envAll.Values.__kubernetes_entrypoint_init_container "deps" dict -}}
 {{- if and ($envAll.Values.images.local_registry.active) (ne $component "image_repo_sync") -}}
+{{- if eq $component "pod_dependency" -}}
+{{- $_ := include "helm-toolkit.utils.merge" ( tuple $envAll.Values.__kubernetes_entrypoint_init_container.deps ( index $envAll.Values.pod_dependency ) $envAll.Values.dependencies.dynamic.common.local_image_registry ) -}}
+{{- else -}}
 {{- $_ := include "helm-toolkit.utils.merge" ( tuple $envAll.Values.__kubernetes_entrypoint_init_container.deps ( index $envAll.Values.dependencies.static $component ) $envAll.Values.dependencies.dynamic.common.local_image_registry ) -}}
+{{- end -}}
+{{- else -}}
+{{- if eq $component "pod_dependency" -}}
+{{- $_ := set $envAll.Values.__kubernetes_entrypoint_init_container "deps" ( index $envAll.Values.pod_dependency ) -}}
 {{- else -}}
 {{- $_ := set $envAll.Values.__kubernetes_entrypoint_init_container "deps" ( index $envAll.Values.dependencies.static $component ) -}}
+{{- end -}}
 {{- end -}}
 {{- $deps := $envAll.Values.__kubernetes_entrypoint_init_container.deps }}
 
@@ -47,13 +55,20 @@ limitations under the License.
       value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/
     - name: DEPENDENCY_SERVICE
       value: "{{ tuple $deps.services $envAll | include "helm-toolkit.utils.comma_joined_service_list" }}"
+{{- if $deps.jobs -}}
+  {{- if kindIs "string" (index $deps.jobs 0) }}
     - name: DEPENDENCY_JOBS
       value: "{{ include "helm-toolkit.utils.joinListWithComma" $deps.jobs }}"
+  {{- else }}
+    - name: DEPENDENCY_JOBS_JSON
+      value: {{- toJson $deps.jobs | quote -}}
+  {{- end -}}
+{{- end }}
     - name: DEPENDENCY_DAEMONSET
       value: "{{ include "helm-toolkit.utils.joinListWithComma" $deps.daemonset }}"
     - name: DEPENDENCY_CONTAINER
       value: "{{ include "helm-toolkit.utils.joinListWithComma" $deps.container }}"
-    - name: DEPENDENCY_POD
+    - name: DEPENDENCY_POD_JSON
       value: {{ if $deps.pod }}{{ toJson $deps.pod | quote }}{{ else }}""{{ end }}
     - name: COMMAND
       value: "echo done"

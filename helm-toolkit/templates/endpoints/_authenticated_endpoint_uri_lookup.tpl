@@ -14,13 +14,34 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
-# This function helps resolve database style endpoints:
-#
-# Presuming that .Values contains an endpoint: definition for 'neutron-db' with the
-# appropriate attributes, a call such as:
-# { tuple "neutron-db" "internal" "userClass" "portName" . | include "helm-toolkit.endpoints.authenticated_endpoint_uri_lookup" }
-# where portName is optional if a default port has been defined in .Values
-# returns: mysql+pymysql://username:password@internal_host:3306/dbname
+{{/*
+abstract: |
+  Resolves database, or basic auth, style endpoints
+values: |
+  endpoints:
+    cluster_domain_suffix: cluster.local
+    oslo_db:
+      auth:
+        admin:
+          username: root
+          password: password
+        service_username:
+          username: username
+          password: password
+      hosts:
+        default: mariadb
+      host_fqdn_override:
+        default: null
+      path: /dbname
+      scheme: mysql+pymysql
+      port:
+        mysql:
+          default: 3306
+usage: |
+  {{ tuple "oslo_db" "internal" "service_username" "mysql" . | include "helm-toolkit.endpoints.authenticated_endpoint_uri_lookup" }}
+return: |
+  mysql+pymysql://serviceuser:password@mariadb.default.svc.cluster.local:3306/dbname
+*/}}
 
 {{- define "helm-toolkit.endpoints.authenticated_endpoint_uri_lookup" -}}
 {{- $type := index . 0 -}}
@@ -28,21 +49,12 @@ limitations under the License.
 {{- $userclass := index . 2 -}}
 {{- $port := index . 3 -}}
 {{- $context := index . 4 -}}
-{{- $typeYamlSafe := $type | replace "-" "_" }}
-{{- $endpointMap := index $context.Values.endpoints $typeYamlSafe }}
-{{- $userMap := index $endpointMap.auth $userclass }}
-{{- $clusterSuffix := printf "%s.%s" "svc" $context.Values.endpoints.cluster_domain_suffix }}
-{{- with $endpointMap -}}
-{{- $namespace := .namespace | default $context.Release.Namespace }}
-{{- $endpointScheme := .scheme }}
+{{- $endpointScheme := tuple $type $endpoint $port $context | include "helm-toolkit.endpoints.keystone_endpoint_scheme_lookup" }}
+{{- $userMap := index $context.Values.endpoints ( $type | replace "-" "_" ) "auth" $userclass }}
 {{- $endpointUser := index $userMap "username" }}
 {{- $endpointPass := index $userMap "password" }}
-{{- $endpointHost := index .hosts $endpoint | default .hosts.default}}
-{{- $endpointPortMAP := index .port $port }}
-{{- $endpointPort := index $endpointPortMAP $endpoint | default (index $endpointPortMAP "default") }}
-{{- $endpointPath := .path | default "" }}
-{{- $endpointClusterHostname := printf "%s.%s.%s" $endpointHost $namespace $clusterSuffix }}
-{{- $endpointHostname := index .host_fqdn_override $endpoint | default .host_fqdn_override.default | default $endpointClusterHostname }}
-{{- printf "%s://%s:%s@%s:%1.f%s" $endpointScheme $endpointUser $endpointPass $endpointHostname $endpointPort $endpointPath -}}
-{{- end -}}
+{{- $endpointHost := tuple $type $endpoint $context | include "helm-toolkit.endpoints.endpoint_host_lookup" }}
+{{- $endpointPort := tuple $type $endpoint $port $context | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+{{- $endpointPath := tuple $type $endpoint $port $context | include "helm-toolkit.endpoints.keystone_endpoint_path_lookup" }}
+{{- printf "%s://%s:%s@%s:%s%s" $endpointScheme $endpointUser $endpointPass $endpointHost $endpointPort $endpointPath -}}
 {{- end -}}

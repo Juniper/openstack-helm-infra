@@ -17,6 +17,8 @@ limitations under the License.
 {{- if .Values.manifests.cron_curator }}
 {{- $envAll := . }}
 
+{{- $esUserSecret := .Values.secrets.elasticsearch.user }}
+
 {{- $serviceAccountName := "elastic-curator"}}
 {{ tuple $envAll "curator" $serviceAccountName | include "helm-toolkit.snippets.kubernetes_pod_rbac_serviceaccount" }}
 ---
@@ -24,6 +26,8 @@ apiVersion: batch/v1beta1
 kind: CronJob
 metadata:
   name: elastic-curator
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
 spec:
   schedule: {{ .Values.conf.curator.schedule | quote }}
   jobTemplate:
@@ -40,9 +44,15 @@ spec:
           containers:
             - name: curator
 {{ tuple $envAll "curator" | include "helm-toolkit.snippets.image" | indent 14 }}
+{{ tuple $envAll $envAll.Values.pod.resources.jobs.curator | include "helm-toolkit.snippets.kubernetes_resources" | indent 14 }}
               command:
                 - /tmp/curator.sh
-{{ tuple $envAll $envAll.Values.pod.resources.jobs.curator | include "helm-toolkit.snippets.kubernetes_resources" | indent 14 }}
+              env:
+                - name: ELASTICSEARCH_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ $esUserSecret }}
+                      key: ELASTICSEARCH_URI
               volumeMounts:
                 - name: pod-etc-curator
                   mountPath: /etc/config
@@ -66,7 +76,7 @@ spec:
                 name: elasticsearch-bin
                 defaultMode: 0555
             - name: elasticsearch-etc
-              configMap:
-                name: elasticsearch-etc
+              secret:
+                secretName: elasticsearch-etc
                 defaultMode: 0444
 {{- end }}

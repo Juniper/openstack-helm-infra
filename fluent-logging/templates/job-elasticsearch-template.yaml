@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */}}
 
-{{- if .Values.manifests.job_elasticsearch_template }}
+{{- if and (.Values.manifests.job_elasticsearch_template) (not (empty .Values.conf.templates)) }}
 {{- $envAll := . }}
 {{- $esUserSecret := .Values.secrets.elasticsearch.user }}
 {{- $mounts_elasticsearch_template := .Values.pod.mounts.elasticsearch_template.elasticsearch_template }}
@@ -27,6 +27,8 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: elasticsearch-template
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
 spec:
   template:
     metadata:
@@ -36,13 +38,12 @@ spec:
       serviceAccountName: {{ $serviceAccountName }}
       restartPolicy: OnFailure
       nodeSelector:
-        {{ .Values.labels.job.node_selector_key }}: {{ .Values.labels.job.node_selector_value }}
+        {{ .Values.labels.job.node_selector_key }}: {{ .Values.labels.job.node_selector_value | quote }}
       initContainers:
 {{ tuple $envAll "elasticsearch_template" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container" | indent 8 }}
       containers:
         - name: elasticsearch-template
-          image: {{ .Values.images.tags.elasticsearch_template }}
-          imagePullPolicy: {{ .Values.images.pull_policy }}
+{{ tuple $envAll "elasticsearch_template" | include "helm-toolkit.snippets.image" | indent 10 }}
 {{ tuple $envAll $envAll.Values.pod.resources.jobs.elasticsearch_template | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           env:
             - name: ELASTICSEARCH_HOST
@@ -66,19 +67,21 @@ spec:
               mountPath: /tmp/create_template.sh
               subPath: create_template.sh
               readOnly: true
+            {{ range $template, $fields := .Values.conf.templates }}
             - name: fluent-logging-etc
-              mountPath: /tmp/template.xml.raw
-              subPath: template.xml.raw
+              mountPath: /tmp/{{$template}}.json
+              subPath: {{$template}}.json
               readOnly: true
-{{ if $mounts_elasticsearch_template.volumeMounts }}{{ toYaml $mounts_elasticsearch_template.volumeMounts | indent 10 }}{{ end }}
+            {{ end }}
+{{ if $mounts_elasticsearch_template.volumeMounts }}{{ toYaml $mounts_elasticsearch_template.volumeMounts | indent 12 }}{{ end }}
       volumes:
         - name: fluent-logging-bin
           configMap:
             name: fluent-logging-bin
             defaultMode: 0555
         - name: fluent-logging-etc
-          configMap:
-            name: fluent-logging-etc
-            defaultMode: 0666
-{{ if $mounts_elasticsearch_template.volumes }}{{ toYaml $mounts_elasticsearch_template.volumes | indent 6 }}{{ end }}
+          secret:
+            secretName: fluent-logging-etc
+            defaultMode: 0444
+{{ if $mounts_elasticsearch_template.volumes }}{{ toYaml $mounts_elasticsearch_template.volumes | indent 8 }}{{ end }}
 {{- end }}

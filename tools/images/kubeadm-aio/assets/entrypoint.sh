@@ -17,7 +17,7 @@
 set -e
 if [ "x${ACTION}" == "xgenerate-join-cmd" ]; then
 : ${TTL:="10m"}
-DISCOVERY_TOKEN="$(kubeadm token --kubeconfig /etc/kubernetes/admin.conf create --ttl ${TTL} --usages signing --groups '')"
+DISCOVERY_TOKEN="$(kubeadm token --kubeconfig /etc/kubernetes/admin.conf create --ttl ${TTL} --usages signing,authentication --groups '')"
 TLS_BOOTSTRAP_TOKEN="$(kubeadm token --kubeconfig /etc/kubernetes/admin.conf create --ttl ${TTL} --usages authentication --groups \"system:bootstrappers:kubeadm:default-node-token\")"
 DISCOVERY_TOKEN_CA_HASH="$(openssl x509 -pubkey -in /etc/kubernetes/pki/ca.crt | openssl rsa -pubin -outform der 2>/dev/null | openssl dgst -sha256 -hex | sed 's/^.* /sha256:/')"
 API_SERVER=$(cat /etc/kubernetes/admin.conf | python -c "import sys, yaml; print yaml.safe_load(sys.stdin)['clusters'][0]['cluster']['server'].split(\"//\",1).pop()")
@@ -52,7 +52,11 @@ fi
 : ${KUBE_API_BIND_ADDR:="${KUBE_BIND_ADDR}"}
 : ${KUBE_CERTS_DIR:="/etc/kubernetes/pki"}
 : ${KUBE_SELF_HOSTED:="false"}
+: ${KUBE_KEYSTONE_AUTH:="false"}
 : ${KUBELET_NODE_LABELS:=""}
+: ${GATE_FQDN_TEST:="false"}
+: ${GATE_INGRESS_IP:="127.0.0.1"}
+: ${GATE_FQDN_TLD:="openstackhelm.test"}
 
 PLAYBOOK_VARS="{
   \"my_container_name\": \"${CONTAINER_NAME}\",
@@ -78,6 +82,7 @@ PLAYBOOK_VARS="{
     \"imageRepository\": \"${KUBE_IMAGE_REPO}\",
     \"certificatesDir\": \"${KUBE_CERTS_DIR}\",
     \"selfHosted\": \"${KUBE_SELF_HOSTED}\",
+    \"keystoneAuth\": \"${KUBE_KEYSTONE_AUTH}\",
     \"api\": {
       \"bindPort\": ${KUBE_API_BIND_PORT}
     },
@@ -86,6 +91,11 @@ PLAYBOOK_VARS="{
       \"podSubnet\": \"${KUBE_NET_POD_SUBNET}\",
       \"serviceSubnet\": \"${KUBE_NET_SUBNET_SUBNET}\"
     }
+  },
+  \"gate\": {
+    \"fqdn_testing\": \"${GATE_FQDN_TEST}\",
+    \"ingress_ip\": \"${GATE_INGRESS_IP}\",
+    \"fqdn_tld\": \"${GATE_FQDN_TLD}\"
   }
 }"
 

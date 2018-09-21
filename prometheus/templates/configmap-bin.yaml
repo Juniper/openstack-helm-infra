@@ -22,6 +22,8 @@ kind: ConfigMap
 metadata:
   name: prometheus-bin
 data:
+  apache.sh: |
+{{ tuple "bin/_apache.sh.tpl" . | include "helm-toolkit.utils.template" | indent 4 }}
   prometheus.sh: |
 {{ tuple "bin/_prometheus.sh.tpl" . | include "helm-toolkit.utils.template" | indent 4 }}
   helm-tests.sh: |

@@ -23,8 +23,8 @@ metadata:
   name: {{ tuple "nagios" "internal" . | include "helm-toolkit.endpoints.hostname_short_endpoint_lookup" }}
 spec:
   ports:
-  - name: metrics
-    port: {{ tuple "nagios" "internal" "nagios" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
+  - name: http
+    port: {{ tuple "nagios" "internal" "http" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
     {{ if .Values.network.nagios.node_port.enabled }}
     nodePort: {{ .Values.network.nagios.node_port.port }}
     {{ end }}

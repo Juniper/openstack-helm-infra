@@ -18,7 +18,7 @@ limitations under the License.
 {{- $envAll := . }}
 
 {{- if and (empty .Values.conf.grafana.database.url) (not (eq .Values.conf.grafana.database.type "sqlite3") ) -}}
-{{- tuple "oslo_db" "internal" "user" "mysql" . | include "helm-toolkit.endpoints.authenticated_endpoint_uri_lookup" | replace "mysql+pymysql://" "mysql://" | set .Values.conf.grafana.database "url"  | quote | trunc 0 -}}
+{{- $_ := tuple "oslo_db" "internal" "user" "mysql" . | include "helm-toolkit.endpoints.authenticated_endpoint_uri_lookup" | replace "mysql+pymysql://" "mysql://" | set .Values.conf.grafana.database "url" }}
 {{- end -}}
 
 {{- if empty .Values.conf.grafana.session.provider_config -}}
@@ -26,19 +26,22 @@ limitations under the License.
 {{- $pass := .Values.endpoints.oslo_db_session.auth.user.password }}
 {{- $host_port := tuple "oslo_db_session" "internal" "mysql" . | include "helm-toolkit.endpoints.host_and_port_endpoint_uri_lookup" }}
 {{- $path := .Values.endpoints.oslo_db_session.path }}
-{{- printf "%s:%s%s(%s)%s" $user $pass "@tcp" $host_port $path | set .Values.conf.grafana.session "provider_config"  | quote | trunc 0 -}}
+{{- $_ := printf "%s:%s%s(%s)%s" $user $pass "@tcp" $host_port $path | set .Values.conf.grafana.session "provider_config" }}
 {{- end -}}
-
 ---
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: grafana-etc
+type: Opaque
 data:
-  grafana.ini: |
-{{ include "helm-toolkit.utils.to_ini" .Values.conf.grafana | indent 4 }}
+  datasources.yaml: {{ include "grafana.utils.generate_datasources" (dict "envAll" $envAll "datasources" .Values.conf.provisioning.datasources) | b64enc }}
+  dashboards.yaml: {{ toYaml .Values.conf.provisioning.dashboards | b64enc }}
+  grafana.ini: {{ include "helm-toolkit.utils.to_ini" .Values.conf.grafana | b64enc }}
+{{ if not (empty .Values.conf.ldap) }}
+{{- include "helm-toolkit.snippets.values_template_renderer" (dict "envAll" $envAll "template" .Values.conf.ldap.template "key" "ldap.toml" "format" "Secret") | indent 2 }}
+{{ end }}
 {{ range $key, $value := .Values.conf.dashboards }}
-  {{$key}}.json: |
-{{ toJson $value | indent 4 }}
+  {{$key}}.json: {{ toJson $value | b64enc }}
 {{ end }}
 {{- end }}

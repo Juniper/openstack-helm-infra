@@ -57,12 +57,19 @@ rules:
     verbs:
     - get
 ---
-apiVersion: extensions/v1beta1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: elasticsearch-master
+  annotations:
+    {{ tuple $envAll | include "helm-toolkit.snippets.release_uuid" }}
+  labels:
+{{ tuple $envAll "elasticsearch" "master" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 4 }}
 spec:
   replicas: {{ .Values.pod.replicas.master }}
+  selector:
+    matchLabels:
+{{ tuple $envAll "elasticsearch" "master" | include "helm-toolkit.snippets.kubernetes_metadata_labels" | indent 6 }}
 {{ tuple $envAll | include "helm-toolkit.snippets.kubernetes_upgrades_deployment" | indent 2 }}
   template:
     metadata:
@@ -77,14 +84,15 @@ spec:
 {{ tuple $envAll "elasticsearch" "master" | include "helm-toolkit.snippets.kubernetes_pod_anti_affinity" | indent 8 }}
       terminationGracePeriodSeconds: {{ .Values.pod.lifecycle.termination_grace_period.master.timeout | default "600" }}
       nodeSelector:
-        {{ .Values.labels.elasticsearch.node_selector_key }}: {{ .Values.labels.elasticsearch.node_selector_value }}
+        {{ .Values.labels.elasticsearch.node_selector_key }}: {{ .Values.labels.elasticsearch.node_selector_value | quote }}
       initContainers:
 {{ tuple $envAll "elasticsearch_master" list | include "helm-toolkit.snippets.kubernetes_entrypoint_init_container"  | indent 8 }}
         - name: memory-map-increase
+{{ tuple $envAll "memory_init" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll $envAll.Values.pod.resources.master | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           securityContext:
             privileged: true
             runAsUser: 0
-{{ tuple $envAll "memory_init" | include "helm-toolkit.snippets.image" | indent 10 }}
           command:
           - sysctl
           - -w
@@ -92,9 +100,9 @@ spec:
 {{ if .Values.storage.filesystem_repository.enabled }}
         - name: elasticsearch-repository-perms
 {{ tuple $envAll "elasticsearch" | include "helm-toolkit.snippets.image" | indent 10 }}
+{{ tuple $envAll $envAll.Values.pod.resources.master | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           securityContext:
             runAsUser: 0
-{{ tuple $envAll $envAll.Values.pod.resources.client | include "helm-toolkit.snippets.kubernetes_resources" | indent 8 }}
           command:
             - chown
             - -R
@@ -113,7 +121,7 @@ spec:
                 - IPC_LOCK
                 - SYS_RESOURCE
 {{ tuple $envAll "elasticsearch" | include "helm-toolkit.snippets.image" | indent 10 }}
-{{ tuple $envAll $envAll.Values.pod.resources.master | include "helm-toolkit.snippets.kubernetes_resources" | indent 8 }}
+{{ tuple $envAll $envAll.Values.pod.resources.master | include "helm-toolkit.snippets.kubernetes_resources" | indent 10 }}
           command:
             - /tmp/elasticsearch.sh
             - start
@@ -126,7 +134,7 @@ spec:
           ports:
             - name: transport
               containerPort: {{ tuple "elasticsearch" "internal" "discovery" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
-          livenessProbe:
+          readinessProbe:
             tcpSocket:
               port: {{ tuple "elasticsearch" "internal" "discovery" . | include "helm-toolkit.endpoints.endpoint_port_lookup" }}
             initialDelaySeconds: 20
@@ -157,6 +165,8 @@ spec:
               mountPath: /tmp/elasticsearch.sh
               subPath: elasticsearch.sh
               readOnly: true
+            - name: elasticsearch-config
+              mountPath: /usr/share/elasticsearch/config
             - name: elasticsearch-etc
               mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
               subPath: elasticsearch.yml
@@ -182,8 +192,8 @@ spec:
             name: elasticsearch-bin
             defaultMode: 0555
         - name: elasticsearch-etc
-          configMap:
-            name: elasticsearch-etc
+          secret:
+            secretName: elasticsearch-etc
             defaultMode: 0444
         - name: storage
           emptyDir: {}
