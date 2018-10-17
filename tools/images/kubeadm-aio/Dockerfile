@@ -57,6 +57,7 @@ RUN set -ex ;\
     pip --no-cache-dir install --upgrade pip ;\
     hash -r ;\
     pip --no-cache-dir install setuptools ;\
+    pip --no-cache-dir install urllib3==1.23 ;\
     pip --no-cache-dir install kubernetes ;\
 
     # NOTE(srwilkers): Pinning ansible to 2.5.5, as pip installs 2.6 by default.
