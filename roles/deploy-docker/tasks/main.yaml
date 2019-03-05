@@ -98,8 +98,13 @@
         - docker-ce
 
 - name: check if docker insecure registry is defined
+  when:
+    - docker.insecure_registries is defined
+    - docker.insecure_registries | length > 0
   set_fact:
-    docker_insecure_registries: "{% if docker.insecure_registries is defined %}\"{{ '\", \"'.join(docker.insecure_registries) }}\"{% endif %}"
+    docker_insecure_registries: "\"{{ '\", \"'.join(docker.insecure_registries) }}\""
+    what happens if user specifies insecure_registries: will no value ? the new check will be same as earlier one right??
+    how is check affect  secure registry for opencontrailnightly ?
 
 - name: moving daemon.json file to /etc/docker/daemon.json
   when: docker_insecure_registries is defined
