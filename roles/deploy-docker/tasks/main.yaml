@@ -98,8 +98,11 @@
         - docker-ce
 
 - name: check if docker insecure registry is defined
+  when:
+    - docker.insecure_registries is defined
+    - docker.insecure_registries | length > 0
   set_fact:
-    docker_insecure_registries: "{% if docker.insecure_registries is defined %}\"{{ '\", \"'.join(docker.insecure_registries) }}\"{% endif %}"
+    docker_insecure_registries: "\"{{ '\", \"'.join(docker.insecure_registries) }}\""
 
 - name: moving daemon.json file to /etc/docker/daemon.json
   when: docker_insecure_registries is defined
