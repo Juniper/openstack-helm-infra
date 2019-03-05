@@ -5,6 +5,8 @@
   register: file_st
 
 - name: Remove duplicate host entrie(s)
+  become: true
+  become_user: root
   lineinfile:
     dest: /etc/hosts
     regexp: "^[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3} {{ hostvars[item]['ansible_fqdn'] }} {{ hostvars[item]['ansible_hostname'] }}"
@@ -13,6 +15,8 @@
   when: item != inventory_hostname
 
 - name: add host entry to /etc/hosts file
+  become: true
+  become_user: root
   lineinfile: dest=/etc/hosts line="{{ hostvars[item]['ansible_host'] }} {{ hostvars[item]['ansible_fqdn'] }} {{ hostvars[item]['ansible_hostname'] }}"
   with_items: "{{ groups['all'] }}"
   when: file_st.stat.exists == true and item != inventory_hostname
