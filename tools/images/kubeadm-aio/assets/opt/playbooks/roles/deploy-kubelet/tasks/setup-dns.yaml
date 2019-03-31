@@ -49,6 +49,9 @@
         old_sd: "{{ existing_sd.stdout }}"
       when: existing_sd is success
 
+- name: print old_sd variable
+  debug:
+    msg: "{{ old_sd }}"
 
 - name: DNS | load new resolv.conf
   template:
