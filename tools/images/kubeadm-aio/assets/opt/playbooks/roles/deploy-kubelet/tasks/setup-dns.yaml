@@ -33,9 +33,37 @@
       shell: cat /etc/resolv.conf  | grep -v '^#' | grep search | sed -n 's/search //p'
       register: existing_sd
 
+    - name: print existing_ns variable
+      debug:
+        msg: "{{ existing_ns }}"
+    - name: print old_sd variable
+      debug:
+        msg: "{{ existing_sd }}"
+
+    - name: search the nameserver already present
+      shell: grep "{{ item }}" /etc/resolv.conf
+      register: ns_info
+      with_items: "{{ external_dns_nameservers }}"
+      ignore_errors: yes
+
+    - name: Init modified_dns variable
+      set_fact:
+        modified_dns_nameservers: []
+
+    - name: check the result about search
+      set_fact:
+        modified_dns_nameservers: "[ '{{ item.item }}' ] + {{ modified_dns_nameservers }}"
+      with_items:
+        - "{{ ns_info.results }}"
+      when: item.rc != 0
+
+    - name: print modified dns servers variable
+      debug:
+        msg: "{{ modified_dns_nameservers }}"
+
     - name: insert existing nameserver list to external_dns_nameservers
       set_fact:
-        external_dns_nameservers: "[ '{{ item }}' ] + {{ external_dns_nameservers }}"
+        modified_dns_nameservers: "[ '{{ item }}' ] + {{ modified_dns_nameservers }}"
       when: existing_ns is success
       with_items:
         - "{{ existing_ns.stdout_lines }}"
@@ -49,6 +77,13 @@
         old_sd: "{{ existing_sd.stdout }}"
       when: existing_sd is success
 
+    - name: print old_sd variable
+      debug:
+        msg: "{{ old_sd }}"
+
+    - name: update the external list
+      set_fact:
+        external_dns_nameservers: "{{ modified_dns_nameservers }}"
 
 - name: DNS | load new resolv.conf
   template:
