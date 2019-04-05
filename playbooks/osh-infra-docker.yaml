@@ -67,3 +67,14 @@
     - deploy-yq
   tags:
     - docker
+
+- hosts: all
+  pre_tasks:
+    - name: set 'platform=dpdk' in agent.conf for vif command to work for dpdk compute
+      ini_file:
+        path: "/etc/contrail/contrail-vrouter-agent.conf"
+        section: DEFAULT
+        option: platform
+        value: dpdk
+        mode: 0644
+      when: "'contrail-vrouter-dpdk' in group_names"
